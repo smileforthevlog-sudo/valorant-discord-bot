@@ -1,3 +1,11 @@
+import {
+  parseAppearanceV2,
+} from "../appearance/parser";
+
+import type {
+  AppearanceV2,
+} from "../appearance/types";
+
 export type DashboardStyle =
   | "cute"
   | "classic"
@@ -13,14 +21,149 @@ export type DashboardGuildSettings = {
   embedColor: number;
   footerText: string;
   emojiStyle: DashboardEmojiStyle;
+
+  // Cosmetics V2.
+  // Older dashboard records may not contain this yet.
+  appearance?: AppearanceV2;
+
   source?: "default" | "saved";
 };
 
 type DashboardSettingsResponse = {
-  settings?: DashboardGuildSettings;
+  settings?: unknown;
 };
 
-class DashboardSettingsService {
+function isRecord(
+  value: unknown
+): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value)
+  );
+}
+
+function parseStyle(
+  value: unknown
+): DashboardStyle | null {
+  switch (value) {
+    case "cute":
+    case "classic":
+    case "minimal":
+      return value;
+
+    default:
+      return null;
+  }
+}
+
+function parseEmojiStyle(
+  value: unknown
+): DashboardEmojiStyle | null {
+  switch (value) {
+    case "cute":
+    case "normal":
+    case "none":
+      return value;
+
+    default:
+      return null;
+  }
+}
+
+function parseAppearance(
+  value: unknown
+): AppearanceV2 | undefined {
+  if (
+    !isRecord(value) ||
+    value.version !== 2
+  ) {
+    return undefined;
+  }
+
+  try {
+    return (
+      parseAppearanceV2(
+        JSON.stringify(
+          value
+        )
+      ) ??
+      undefined
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+export function parseDashboardGuildSettings(
+  value: unknown
+): DashboardGuildSettings | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const style =
+    parseStyle(
+      value.style
+    );
+
+  const emojiStyle =
+    parseEmojiStyle(
+      value.emojiStyle
+    );
+
+  if (
+    !style ||
+    !emojiStyle ||
+    typeof value.embedColor !==
+      "number" ||
+    !Number.isInteger(
+      value.embedColor
+    ) ||
+    value.embedColor < 0 ||
+    value.embedColor > 0xffffff ||
+    typeof value.footerText !==
+      "string"
+  ) {
+    return null;
+  }
+
+  const source =
+    value.source ===
+      "default" ||
+    value.source ===
+      "saved"
+      ? value.source
+      : undefined;
+
+  const appearance =
+    parseAppearance(
+      value.appearance
+    );
+
+  return {
+    style,
+    embedColor:
+      value.embedColor,
+    footerText:
+      value.footerText,
+    emojiStyle,
+
+    ...(appearance
+      ? {
+          appearance,
+        }
+      : {}),
+
+    ...(source
+      ? {
+          source,
+        }
+      : {}),
+  };
+}
+
+export class DashboardSettingsService {
   private get baseUrl(): string | null {
     return (
       process.env.DASHBOARD_SETTINGS_URL?.trim() ||
@@ -91,11 +234,20 @@ class DashboardSettingsService {
         (await response.json()) as
           DashboardSettingsResponse;
 
-      if (!data.settings) {
+      const settings =
+        parseDashboardGuildSettings(
+          data.settings
+        );
+
+      if (!settings) {
+        console.warn(
+          "Dashboard settings GET returned an invalid settings payload."
+        );
+
         return null;
       }
 
-      return data.settings;
+      return settings;
     } catch (error) {
       console.warn(
         "Dashboard settings GET failed:",
@@ -139,6 +291,7 @@ class DashboardSettingsService {
             Accept:
               "application/json",
           },
+
           body: JSON.stringify({
             style:
               settings.style,
@@ -148,7 +301,15 @@ class DashboardSettingsService {
               settings.footerText,
             emojiStyle:
               settings.emojiStyle,
+
+            ...(settings.appearance
+              ? {
+                  appearance:
+                    settings.appearance,
+                }
+              : {}),
           }),
+
           signal:
             AbortSignal.timeout(
               5000

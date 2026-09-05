@@ -517,6 +517,23 @@ function saveDashboardSettingsLocally(
     settings.emojiStyle
   );
 
+  // Phase 7C:
+  // when the dashboard supplies a canonical Cosmetics V2
+  // appearance object, save it exactly into appearance_json.
+  //
+  // Older dashboard records still fall back to the V1 -> V2
+  // compatibility bridge.
+  if (
+    settings.appearance
+  ) {
+    appearanceV2Store.save(
+      targetGuildId,
+      settings.appearance
+    );
+
+    return;
+  }
+
   const updatedSettings =
     getGuildSettings(
       targetGuildId
@@ -530,6 +547,14 @@ function saveDashboardSettingsLocally(
 function toDashboardSettings(
   settings: GuildSettings
 ): DashboardGuildSettings {
+  const appearance =
+    appearanceV2Store.getOrCreate(
+      settings.guild_id,
+      toLegacyAppearanceSettings(
+        settings
+      )
+    );
+
   return {
     style:
       getStyle(settings),
@@ -539,6 +564,10 @@ function toDashboardSettings(
       settings.footer_text,
     emojiStyle:
       getEmojiStyle(settings),
+
+    // Include the full V2 document on bot -> dashboard writes.
+    // The Netlify settings layer normalizes this before storage.
+    appearance,
   };
 }
 
@@ -590,14 +619,16 @@ async function getSyncedGuildSettings(
 async function pushGuildSettings(
   settings: GuildSettings
 ) {
-  // Until the dashboard itself speaks Cosmetics V2,
-  // mirror V1-compatible changes into appearance_json.
-  // V2-only fields such as stat visibility and custom
-  // asset URLs are preserved by syncLegacyFields().
+  // Discord /settings commands still edit the legacy-compatible
+  // fields. Mirror those fields into the canonical V2 document
+  // while preserving V2-only choices such as timestamps, stat
+  // visibility and image modes.
   syncLegacyAppearanceV2(
     settings
   );
 
+  // Phase 7C sends the resulting full appearance document back
+  // to Netlify, completing V2 two-way synchronization.
   await dashboardSettingsService.saveGuildSettings(
     settings.guild_id,
     toDashboardSettings(
