@@ -53,6 +53,13 @@ export type PlayerProfileRenderData = {
   mockData?: boolean;
 };
 
+export type LinkedProfileRenderData = {
+  riotName: string;
+  riotTag: string;
+  discordUsername?: string | null;
+  verificationText: string;
+};
+
 export type ComparisonPlayerRenderData = {
   label: string;
   riotName: string;
@@ -472,6 +479,59 @@ export function buildProfileEmbedV2(
   }
 
   return embed;
+}
+
+export function buildLinkedProfileEmbedV2(
+  data: LinkedProfileRenderData,
+  appearance: AppearanceV2,
+  assets?: ResolvedEmbedAssets
+): EmbedBuilder {
+  const riotId =
+    `${data.riotName}#${data.riotTag}`;
+
+  const embed =
+    new EmbedBuilder()
+      .setTitle(
+        decorateTitle(
+          riotId,
+          appearance
+        )
+      );
+
+  if (
+    data.discordUsername
+  ) {
+    const description =
+      appearance.layout.profile ===
+      "minimal"
+        ? `Profile for **${data.discordUsername}**`
+        : `VALORANT profile for **${data.discordUsername}**`;
+
+    embed.setDescription(
+      description
+    );
+  }
+
+  embed.addFields(
+    {
+      name: "Riot ID",
+      value:
+        `**${riotId}**`,
+      inline: true,
+    },
+    {
+      name: "Verification",
+      value:
+        data.verificationText,
+      inline: true,
+    }
+  );
+
+  return applyCommonVisuals(
+    embed,
+    appearance,
+    assets
+  );
 }
 
 function comparisonSummary(
