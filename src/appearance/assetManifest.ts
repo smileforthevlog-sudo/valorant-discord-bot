@@ -47,21 +47,31 @@ export type ThemeAssetSet = {
   leaderboardBannerUrl?: string;
 };
 
+export type AssetSourceProvider =
+  | "riot-public-content-catalog"
+  | "local"
+  | "custom"
+  | "mixed";
+
 export type AppearanceAssetManifest = {
   version: 1;
 
   source: {
     provider:
-      | "riot-public-content-catalog"
-      | "local"
-      | "custom";
+      AssetSourceProvider;
 
     release?: string;
     generatedAt?: string;
+
+    // Optional provenance for manifests assembled from more
+    // than one verified/static source.
+    components?: {
+      agents?: string;
+      ranks?: string;
+      themes?: string;
+    };
   };
 
-  // Exact competitive divisions are preferred (diamond2, immortal3, etc.).
-  // Generic tier keys are retained as a fallback so older manifests still work.
   ranks: Partial<
     Record<
       ValorantRankKey | ValorantRankTier,

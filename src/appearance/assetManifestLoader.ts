@@ -4,6 +4,7 @@ import {
 
 import type {
   AppearanceAssetManifest,
+  AssetSourceProvider,
 } from "./assetManifest";
 
 import {
@@ -18,6 +19,68 @@ function isRecord(
     value !== null &&
     !Array.isArray(value)
   );
+}
+
+function parseProvider(
+  value: unknown
+): AssetSourceProvider | null {
+  switch (value) {
+    case "riot-public-content-catalog":
+    case "local":
+    case "custom":
+    case "mixed":
+      return value;
+
+    default:
+      return null;
+  }
+}
+
+function parseComponents(
+  value: unknown
+):
+  | NonNullable<
+      AppearanceAssetManifest["source"]["components"]
+    >
+  | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const components:
+    NonNullable<
+      AppearanceAssetManifest["source"]["components"]
+    > = {};
+
+  if (
+    typeof value.agents ===
+      "string"
+  ) {
+    components.agents =
+      value.agents;
+  }
+
+  if (
+    typeof value.ranks ===
+      "string"
+  ) {
+    components.ranks =
+      value.ranks;
+  }
+
+  if (
+    typeof value.themes ===
+      "string"
+  ) {
+    components.themes =
+      value.themes;
+  }
+
+  return Object.keys(
+    components
+  ).length > 0
+    ? components
+    : undefined;
 }
 
 export function loadAppearanceAssetManifest(
@@ -72,24 +135,27 @@ export function loadAppearanceAssetManifest(
         : {};
 
     const provider =
-      source.provider;
+      parseProvider(
+        source.provider
+      );
 
-    if (
-      provider !==
-        "riot-public-content-catalog" &&
-      provider !== "local" &&
-      provider !== "custom"
-    ) {
+    if (!provider) {
       throw new Error(
         "Invalid asset manifest provider."
       );
     }
+
+    const components =
+      parseComponents(
+        source.components
+      );
 
     return {
       version: 1,
 
       source: {
         provider,
+
         ...(typeof source.release ===
         "string"
           ? {
@@ -97,11 +163,18 @@ export function loadAppearanceAssetManifest(
                 source.release,
             }
           : {}),
+
         ...(typeof source.generatedAt ===
         "string"
           ? {
               generatedAt:
                 source.generatedAt,
+            }
+          : {}),
+
+        ...(components
+          ? {
+              components,
             }
           : {}),
       },
