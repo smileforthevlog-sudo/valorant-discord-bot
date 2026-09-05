@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "source": {
+    "provider": "riot-public-content-catalog",
+    "release": "replace-after-import"
+  },
+  "ranks": {},
+  "agents": {},
+  "themes": {}
+}

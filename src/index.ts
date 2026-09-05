@@ -16,6 +16,21 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { riotService } from "./services/riot";
+import { ensureAppearanceV2Column } from "./appearance/migrate";
+import { createAppearanceV2Store } from "./appearance/store";
+import { appearanceV2FromLegacy } from "./appearance/defaults";
+import {
+  buildComparisonEmbedV2,
+  buildLinkedProfileEmbedV2,
+  buildProfileEmbedV2,
+} from "./appearance/renderer";
+import {
+  ManifestAppearanceAssetResolver,
+} from "./appearance/assets";
+import type { LegacyAppearanceSettings } from "./appearance/types";
+import {
+  appearanceAssetManifestService,
+} from "./services/appearanceAssetManifest";
 import {
   dashboardSettingsService,
   type DashboardGuildSettings,
@@ -168,6 +183,13 @@ db.exec(`
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )
 `);
+
+// Cosmetics V2 is introduced alongside the existing settings.
+// The bot still renders with the V1 fields for now.
+ensureAppearanceV2Column(db);
+
+const appearanceV2Store =
+  createAppearanceV2Store(db);
 
 // --------------------------------------------------
 // Types
@@ -423,9 +445,49 @@ function getGuildSettings(
     targetGuildId
   );
 
-  return getGuildSettingsStatement.get(
-    targetGuildId
-  ) as GuildSettings;
+  const settings =
+    getGuildSettingsStatement.get(
+      targetGuildId
+    ) as GuildSettings;
+
+  // Lazy V1 -> V2 migration:
+  // the first time a guild's settings are read,
+  // create appearance_json if it is missing or invalid.
+  // V1 remains the live renderer source for now.
+  appearanceV2Store.getOrCreate(
+    targetGuildId,
+    toLegacyAppearanceSettings(
+      settings
+    )
+  );
+
+  return settings;
+}
+
+function toLegacyAppearanceSettings(
+  settings: GuildSettings
+): LegacyAppearanceSettings {
+  return {
+    style:
+      settings.style,
+    embedColor:
+      settings.embed_color,
+    footerText:
+      settings.footer_text,
+    emojiStyle:
+      settings.emoji_style,
+  };
+}
+
+function syncLegacyAppearanceV2(
+  settings: GuildSettings
+): void {
+  appearanceV2Store.syncLegacyFields(
+    settings.guild_id,
+    toLegacyAppearanceSettings(
+      settings
+    )
+  );
 }
 
 function getDefaultGuildSettings():
@@ -453,6 +515,15 @@ function saveDashboardSettingsLocally(
     settings.embedColor,
     settings.footerText,
     settings.emojiStyle
+  );
+
+  const updatedSettings =
+    getGuildSettings(
+      targetGuildId
+    );
+
+  syncLegacyAppearanceV2(
+    updatedSettings
   );
 }
 
@@ -519,6 +590,14 @@ async function getSyncedGuildSettings(
 async function pushGuildSettings(
   settings: GuildSettings
 ) {
+  // Until the dashboard itself speaks Cosmetics V2,
+  // mirror V1-compatible changes into appearance_json.
+  // V2-only fields such as stat visibility and custom
+  // asset URLs are preserved by syncLegacyFields().
+  syncLegacyAppearanceV2(
+    settings
+  );
+
   await dashboardSettingsService.saveGuildSettings(
     settings.guild_id,
     toDashboardSettings(
@@ -1123,6 +1202,10 @@ client.once(
     );
 
     console.log(
+      `Cosmetics asset manifest: ${appearanceAssetManifestService.getStatus()}`
+    );
+
+    console.log(
       `Riot service status: ${riotService.getStatus()}`
     );
   }
@@ -1343,117 +1426,97 @@ client.on(
             return;
           }
 
-          const totalGames =
-            player.wins +
-            player.losses;
-
-          const winRate =
-            totalGames > 0
-              ? (
-                  (player.wins /
-                    totalGames) *
-                  100
-                ).toFixed(
-                  1
+          // Cosmetics V2 profile path.
+          // Mock profiles and linked-user profiles now share the V2
+          // appearance/asset pipeline. /compare remains on V1 for now.
+          const appearance =
+            interaction.guildId
+              ? appearanceV2Store.getOrCreate(
+                  interaction.guildId,
+                  toLegacyAppearanceSettings(
+                    settings
+                  )
                 )
-              : "0.0";
+              : appearanceV2FromLegacy(
+                  toLegacyAppearanceSettings(
+                    settings
+                  )
+                );
+
+          const manifest =
+            await appearanceAssetManifestService.getManifest();
+
+          const assetResolver =
+            new ManifestAppearanceAssetResolver(
+              manifest
+            );
+
+          const assets =
+            await assetResolver.resolveProfileAssets(
+              appearance,
+              {
+                currentRank:
+                  player.currentRank,
+
+                mainAgent:
+                  player.mainAgents[0] ??
+                  null,
+
+                serverIconUrl:
+                  interaction.guild?.iconURL() ??
+                  null,
+              }
+            );
+
+          const playerLabel =
+            selectedPlayer
+              .charAt(0)
+              .toUpperCase() +
+            selectedPlayer.slice(1);
 
           const profileEmbed =
-            new EmbedBuilder()
-              .setColor(
-                settings.embed_color
-              )
-              .setTitle(
-                withIcon(
-                  getIcon(
-                    settings,
-                    "profile"
-                  ),
-                  `${player.riotName}#${player.tag}`
-                )
-              )
-              .setDescription(
-                getProfileDescription(
-                  settings,
-                  selectedPlayer
-                )
-              )
-              .addFields(
-                {
-                  name:
-                    "Current Rank",
-                  value:
-                    player.currentRank,
-                  inline:
-                    true,
-                },
-                {
-                  name:
-                    "Peak Rank",
-                  value:
-                    player.peakRank,
-                  inline:
-                    true,
-                },
-                {
-                  name:
-                    "Win Rate",
-                  value:
-                    `${winRate}%`,
-                  inline:
-                    true,
-                },
-                {
-                  name:
-                    "K/D",
-                  value:
-                    player.kd.toFixed(
-                      2
-                    ),
-                  inline:
-                    true,
-                },
-                {
-                  name:
-                    "ACS",
-                  value:
-                    player.acs.toString(),
-                  inline:
-                    true,
-                },
-                {
-                  name:
-                    "Headshot %",
-                  value:
-                    `${player.headshotPercentage}%`,
-                  inline:
-                    true,
-                },
-                {
-                  name:
-                    "Record",
-                  value:
-                    `${player.wins}W - ${player.losses}L`,
-                  inline:
-                    true,
-                },
-                {
-                  name:
-                    "Main Agents",
-                  value:
-                    player.mainAgents.join(
-                      getAgentSeparator(
-                        settings
-                      )
-                    ),
-                  inline:
-                    true,
-                }
-              )
-              .setFooter({
-                text:
-                  `${settings.footer_text} • Mock Data`,
-              });
+            buildProfileEmbedV2(
+              {
+                riotName:
+                  player.riotName,
+
+                riotTag:
+                  player.tag,
+
+                discordUsername:
+                  playerLabel,
+
+                currentRank:
+                  player.currentRank,
+
+                peakRank:
+                  player.peakRank,
+
+                wins:
+                  player.wins,
+
+                losses:
+                  player.losses,
+
+                kd:
+                  player.kd,
+
+                acs:
+                  player.acs,
+
+                headshotPercentage:
+                  player.headshotPercentage,
+
+                mainAgents:
+                  player.mainAgents,
+
+                mockData:
+                  true,
+              },
+
+              appearance,
+              assets
+            );
 
           await interaction.reply({
             embeds: [
@@ -1508,139 +1571,94 @@ client.on(
           if (
             riotStats
           ) {
-            const totalGames =
-              riotStats.wins +
-              riotStats.losses;
-
-            const winRate =
-              totalGames >
-              0
-                ? (
-                    (riotStats.wins /
-                      totalGames) *
-                    100
-                  ).toFixed(
-                    1
+            const appearance =
+              interaction.guildId
+                ? appearanceV2Store.getOrCreate(
+                    interaction.guildId,
+                    toLegacyAppearanceSettings(
+                      settings
+                    )
                   )
-                : "0.0";
+                : appearanceV2FromLegacy(
+                    toLegacyAppearanceSettings(
+                      settings
+                    )
+                  );
+
+            const manifest =
+              await appearanceAssetManifestService.getManifest();
+
+            const assetResolver =
+              new ManifestAppearanceAssetResolver(
+                manifest
+              );
+
+            const assets =
+              await assetResolver.resolveProfileAssets(
+                appearance,
+                {
+                  currentRank:
+                    riotStats.currentRank,
+
+                  mainAgent:
+                    riotStats.mainAgents[0] ??
+                    null,
+
+                  serverIconUrl:
+                    interaction.guild?.iconURL() ??
+                    null,
+                }
+              );
 
             const statsEmbed =
-              new EmbedBuilder()
-                .setColor(
-                  settings.embed_color
-                )
-                .setTitle(
-                  withIcon(
-                    getIcon(
+              buildProfileEmbedV2(
+                {
+                  riotName:
+                    riotStats.riotName,
+
+                  riotTag:
+                    riotStats.riotTag,
+
+                  discordUsername:
+                    targetUser.username,
+
+                  currentRank:
+                    riotStats.currentRank,
+
+                  peakRank:
+                    riotStats.peakRank,
+
+                  wins:
+                    riotStats.wins,
+
+                  losses:
+                    riotStats.losses,
+
+                  kd:
+                    riotStats.kd,
+
+                  acs:
+                    riotStats.acs,
+
+                  headshotPercentage:
+                    riotStats.headshotPercentage,
+
+                  mainAgents:
+                    riotStats.mainAgents,
+
+                  verified:
+                    true,
+
+                  verificationText:
+                    getVerificationText(
                       settings,
-                      "profile"
+                      true
                     ),
-                    `${riotStats.riotName}#${riotStats.riotTag}`
-                  )
-                )
-                .setDescription(
-                  getProfileDescription(
-                    settings,
-                    targetUser.username
-                  )
-                )
-                .addFields(
-                  {
-                    name:
-                      "Current Rank",
-                    value:
-                      riotStats.currentRank ??
-                      "Unavailable",
-                    inline:
-                      true,
-                  },
-                  {
-                    name:
-                      "Peak Rank",
-                    value:
-                      riotStats.peakRank ??
-                      "Unavailable",
-                    inline:
-                      true,
-                  },
-                  {
-                    name:
-                      "Win Rate",
-                    value:
-                      `${winRate}%`,
-                    inline:
-                      true,
-                  },
-                  {
-                    name:
-                      "K/D",
-                    value:
-                      riotStats.kd?.toFixed(
-                        2
-                      ) ??
-                      "Unavailable",
-                    inline:
-                      true,
-                  },
-                  {
-                    name:
-                      "ACS",
-                    value:
-                      riotStats.acs?.toString() ??
-                      "Unavailable",
-                    inline:
-                      true,
-                  },
-                  {
-                    name:
-                      "Headshot %",
-                    value:
-                      riotStats.headshotPercentage !==
-                      null
-                        ? `${riotStats.headshotPercentage}%`
-                        : "Unavailable",
-                    inline:
-                      true,
-                  },
-                  {
-                    name:
-                      "Record",
-                    value:
-                      `${riotStats.wins}W - ${riotStats.losses}L`,
-                    inline:
-                      true,
-                  },
-                  {
-                    name:
-                      "Main Agents",
-                    value:
-                      riotStats.mainAgents.length >
-                      0
-                        ? riotStats.mainAgents.join(
-                            getAgentSeparator(
-                              settings
-                            )
-                          )
-                        : "Unavailable",
-                    inline:
-                      true,
-                  },
-                  {
-                    name:
-                      "Verification",
-                    value:
-                      getVerificationText(
-                        settings,
-                        true
-                      ),
-                    inline:
-                      false,
-                  }
-                )
-                .setFooter({
-                  text:
-                    settings.footer_text,
-                });
+                },
+
+                appearance,
+                assets
+              );
 
             await interaction.reply({
               embeds: [
@@ -1664,52 +1682,67 @@ client.on(
           return;
         }
 
+        const appearance =
+          interaction.guildId
+            ? appearanceV2Store.getOrCreate(
+                interaction.guildId,
+                toLegacyAppearanceSettings(
+                  settings
+                )
+              )
+            : appearanceV2FromLegacy(
+                toLegacyAppearanceSettings(
+                  settings
+                )
+              );
+
+        const manifest =
+          await appearanceAssetManifestService.getManifest();
+
+        const assetResolver =
+          new ManifestAppearanceAssetResolver(
+            manifest
+          );
+
+        const assets =
+          await assetResolver.resolveProfileAssets(
+            appearance,
+            {
+              currentRank:
+                null,
+
+              mainAgent:
+                null,
+
+              serverIconUrl:
+                interaction.guild?.iconURL() ??
+                null,
+            }
+          );
+
         const linkedEmbed =
-          new EmbedBuilder()
-            .setColor(
-              settings.embed_color
-            )
-            .setTitle(
-              withIcon(
-                getIcon(
+          buildLinkedProfileEmbedV2(
+            {
+              riotName:
+                linkedAccount.riot_name,
+
+              riotTag:
+                linkedAccount.riot_tag,
+
+              discordUsername:
+                targetUser.username,
+
+              verificationText:
+                getVerificationText(
                   settings,
-                  "profile"
+                  linkedAccount.link_method ===
+                    "rso"
                 ),
-                `${linkedAccount.riot_name}#${linkedAccount.riot_tag}`
-              )
-            )
-            .setDescription(
-              getProfileDescription(
-                settings,
-                targetUser.username
-              )
-            )
-            .addFields(
-              {
-                name:
-                  "Riot ID",
-                value:
-                  `**${linkedAccount.riot_name}#${linkedAccount.riot_tag}**`,
-                inline:
-                  true,
-              },
-              {
-                name:
-                  "Verification",
-                value:
-                  getVerificationText(
-                    settings,
-                    linkedAccount.link_method ===
-                      "rso"
-                  ),
-                inline:
-                  true,
-              }
-            )
-            .setFooter({
-              text:
-                settings.footer_text,
-            });
+            },
+
+            appearance,
+            assets
+          );
 
         await interaction.reply({
           embeds: [
@@ -2110,64 +2143,87 @@ client.on(
               "rso"
           );
 
-        const comparisonEmbed =
-          new EmbedBuilder()
-            .setColor(
-              settings.embed_color
-            )
-            .setTitle(
-              getCompareTitle(
-                settings
+        const appearance =
+          interaction.guildId
+            ? appearanceV2Store.getOrCreate(
+                interaction.guildId,
+                toLegacyAppearanceSettings(
+                  settings
+                )
               )
-            )
-            .setDescription(
-              getStyle(
-                settings
-              ) ===
-                "cute"
-                ? `**${user1.username}** ♡ **${user2.username}**`
-                : `**${user1.username}** vs **${user2.username}**`
-            )
-            .addFields(
-              {
-                name:
+            : appearanceV2FromLegacy(
+                toLegacyAppearanceSettings(
+                  settings
+                )
+              );
+
+        const manifest =
+          await appearanceAssetManifestService.getManifest();
+
+        const assetResolver =
+          new ManifestAppearanceAssetResolver(
+            manifest
+          );
+
+        const assets =
+          await assetResolver.resolveComparisonAssets(
+            appearance,
+            {
+              guildId:
+                interaction.guildId,
+
+              serverIconUrl:
+                interaction.guild?.iconURL() ??
+                null,
+            }
+          );
+
+        // Current /compare is still identity-only because Riot
+        // stats are not configured yet. V2 keeps that behavior
+        // while moving presentation/layout to the new renderer.
+        const comparisonEmbed =
+          buildComparisonEmbedV2(
+            {
+              left: {
+                label:
                   user1.username,
-                value:
-                  `**${account1.riot_name}#${account1.riot_tag}**\n${account1Verification}`,
-                inline:
-                  true,
+
+                riotName:
+                  account1.riot_name,
+
+                riotTag:
+                  account1.riot_tag,
+
+                verified:
+                  account1.link_method ===
+                  "rso",
+
+                verificationText:
+                  account1Verification,
               },
-              {
-                name:
-                  getStyle(
-                    settings
-                  ) ===
-                  "cute"
-                    ? "♡"
-                    : "VS",
-                value:
-                  getStyle(
-                    settings
-                  ) ===
-                  "cute"
-                    ? "୨୧"
-                    : "vs",
-                inline:
-                  true,
-              },
-              {
-                name:
+
+              right: {
+                label:
                   user2.username,
-                value:
-                  `**${account2.riot_name}#${account2.riot_tag}**\n${account2Verification}`,
-                inline:
-                  true,
-              }
-            )
-            .setFooter({
-              text:
-                settings.footer_text,
-            });
+
+                riotName:
+                  account2.riot_name,
+
+                riotTag:
+                  account2.riot_tag,
+
+                verified:
+                  account2.link_method ===
+                  "rso",
+
+                verificationText:
+                  account2Verification,
+              },
+            },
+
+            appearance,
+            assets
+          );
 
         await interaction.reply({
           embeds: [
