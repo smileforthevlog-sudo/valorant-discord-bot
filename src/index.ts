@@ -5,6 +5,7 @@ import {
   EmbedBuilder,
   GatewayIntentBits,
   MessageFlags,
+  PermissionFlagsBits,
   REST,
   Routes,
   SlashCommandBuilder,
@@ -45,13 +46,18 @@ const DISCORD_GUILD_ID: string = guildId;
 // --------------------------------------------------
 
 const databasePath =
-  process.env.DATABASE_PATH ?? "data/valorant-bot.db";
+  process.env.DATABASE_PATH ??
+  "data/valorant-bot.db";
 
 mkdirSync(dirname(databasePath), {
   recursive: true,
 });
 
 const db = new DatabaseSync(databasePath);
+
+// --------------------------------------------------
+// Linked accounts table
+// --------------------------------------------------
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS linked_accounts (
@@ -63,7 +69,7 @@ db.exec(`
 `);
 
 // --------------------------------------------------
-// Database migrations
+// Linked account migrations
 // --------------------------------------------------
 
 const linkedAccountColumns = db
@@ -116,6 +122,21 @@ if (
 }
 
 // --------------------------------------------------
+// Per-server settings table
+// --------------------------------------------------
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS guild_settings (
+    guild_id TEXT PRIMARY KEY,
+    style TEXT NOT NULL DEFAULT 'cute',
+    embed_color INTEGER NOT NULL DEFAULT 16758465,
+    footer_text TEXT NOT NULL DEFAULT 'Valorant Tracker Bot ♡',
+    emoji_style TEXT NOT NULL DEFAULT 'cute',
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+
+// --------------------------------------------------
 // Types
 // --------------------------------------------------
 
@@ -125,6 +146,15 @@ type LinkedAccount = {
   riot_puuid: string | null;
   link_method: string;
   verified_at: string | null;
+};
+
+type GuildSettings = {
+  guild_id: string;
+  style: string;
+  embed_color: number;
+  footer_text: string;
+  emoji_style: string;
+  updated_at: string;
 };
 
 type MockPlayer = {
@@ -155,7 +185,11 @@ const players: Record<string, MockPlayer> = {
     kd: 1.14,
     acs: 238,
     headshotPercentage: 27.4,
-    mainAgents: ["Jett", "Omen", "Reyna"],
+    mainAgents: [
+      "Jett",
+      "Omen",
+      "Reyna",
+    ],
   },
 
   alex: {
@@ -168,15 +202,18 @@ const players: Record<string, MockPlayer> = {
     kd: 1.02,
     acs: 219,
     headshotPercentage: 21.9,
-    mainAgents: ["Sova", "Cypher", "Omen"],
+    mainAgents: [
+      "Sova",
+      "Cypher",
+      "Omen",
+    ],
   },
 };
 
 // --------------------------------------------------
-// Database helpers
+// Linked-account database helpers
 // --------------------------------------------------
 
-// Manual /link
 const saveLinkedAccountStatement = db.prepare(`
   INSERT INTO linked_accounts (
     discord_user_id,
@@ -198,27 +235,27 @@ const saveLinkedAccountStatement = db.prepare(`
     linked_at = CURRENT_TIMESTAMP
 `);
 
-// Future Riot Sign On save helper
-const saveVerifiedLinkedAccountStatement = db.prepare(`
-  INSERT INTO linked_accounts (
-    discord_user_id,
-    riot_name,
-    riot_tag,
-    riot_puuid,
-    link_method,
-    verified_at
-  )
-  VALUES (?, ?, ?, ?, 'rso', CURRENT_TIMESTAMP)
+const saveVerifiedLinkedAccountStatement =
+  db.prepare(`
+    INSERT INTO linked_accounts (
+      discord_user_id,
+      riot_name,
+      riot_tag,
+      riot_puuid,
+      link_method,
+      verified_at
+    )
+    VALUES (?, ?, ?, ?, 'rso', CURRENT_TIMESTAMP)
 
-  ON CONFLICT(discord_user_id)
-  DO UPDATE SET
-    riot_name = excluded.riot_name,
-    riot_tag = excluded.riot_tag,
-    riot_puuid = excluded.riot_puuid,
-    link_method = 'rso',
-    verified_at = CURRENT_TIMESTAMP,
-    linked_at = CURRENT_TIMESTAMP
-`);
+    ON CONFLICT(discord_user_id)
+    DO UPDATE SET
+      riot_name = excluded.riot_name,
+      riot_tag = excluded.riot_tag,
+      riot_puuid = excluded.riot_puuid,
+      link_method = 'rso',
+      verified_at = CURRENT_TIMESTAMP,
+      linked_at = CURRENT_TIMESTAMP
+  `);
 
 const deleteLinkedAccountStatement = db.prepare(`
   DELETE FROM linked_accounts
@@ -245,17 +282,329 @@ function getLinkedAccount(
 }
 
 // --------------------------------------------------
+// Guild-settings database helpers
+// --------------------------------------------------
+
+const getGuildSettingsStatement = db.prepare(`
+  SELECT
+    guild_id,
+    style,
+    embed_color,
+    footer_text,
+    emoji_style,
+    updated_at
+  FROM guild_settings
+  WHERE guild_id = ?
+`);
+
+const createGuildSettingsStatement = db.prepare(`
+  INSERT OR IGNORE INTO guild_settings (
+    guild_id
+  )
+  VALUES (?)
+`);
+
+const updateGuildStyleStatement = db.prepare(`
+  UPDATE guild_settings
+  SET
+    style = ?,
+    updated_at = CURRENT_TIMESTAMP
+  WHERE guild_id = ?
+`);
+
+const updateGuildColorStatement = db.prepare(`
+  UPDATE guild_settings
+  SET
+    embed_color = ?,
+    updated_at = CURRENT_TIMESTAMP
+  WHERE guild_id = ?
+`);
+
+const updateGuildFooterStatement = db.prepare(`
+  UPDATE guild_settings
+  SET
+    footer_text = ?,
+    updated_at = CURRENT_TIMESTAMP
+  WHERE guild_id = ?
+`);
+
+const updateGuildEmojiStatement = db.prepare(`
+  UPDATE guild_settings
+  SET
+    emoji_style = ?,
+    updated_at = CURRENT_TIMESTAMP
+  WHERE guild_id = ?
+`);
+
+const resetGuildSettingsStatement = db.prepare(`
+  DELETE FROM guild_settings
+  WHERE guild_id = ?
+`);
+
+function getGuildSettings(
+  guildId: string
+): GuildSettings {
+  createGuildSettingsStatement.run(
+    guildId
+  );
+
+  return getGuildSettingsStatement.get(
+    guildId
+  ) as GuildSettings;
+}
+
+function getDefaultGuildSettings(): GuildSettings {
+  return {
+    guild_id: "default",
+    style: "cute",
+    embed_color: 0xffb6c1,
+    footer_text: "Valorant Tracker Bot ♡",
+    emoji_style: "cute",
+    updated_at: new Date().toISOString(),
+  };
+}
+
+// --------------------------------------------------
+// Theme helpers
+// --------------------------------------------------
+
+function getStyle(
+  settings: GuildSettings
+): "cute" | "classic" | "minimal" {
+  if (
+    settings.style === "classic" ||
+    settings.style === "minimal"
+  ) {
+    return settings.style;
+  }
+
+  return "cute";
+}
+
+function getEmojiStyle(
+  settings: GuildSettings
+): "cute" | "normal" | "none" {
+  if (
+    settings.emoji_style === "normal" ||
+    settings.emoji_style === "none"
+  ) {
+    return settings.emoji_style;
+  }
+
+  return "cute";
+}
+
+function getIcon(
+  settings: GuildSettings,
+  type:
+    | "profile"
+    | "compare"
+    | "verified"
+    | "warning"
+    | "ping"
+    | "settings"
+): string {
+  const emojiStyle =
+    getEmojiStyle(settings);
+
+  if (emojiStyle === "none") {
+    return "";
+  }
+
+  if (emojiStyle === "normal") {
+    const normalIcons = {
+      profile: "🎯",
+      compare: "⚔️",
+      verified: "✅",
+      warning: "⚠️",
+      ping: "🏓",
+      settings: "⚙️",
+    };
+
+    return normalIcons[type];
+  }
+
+  const cuteIcons = {
+    profile: "♡",
+    compare: "୨୧",
+    verified: "♡",
+    warning: "♡",
+    ping: "♡",
+    settings: "୨୧",
+  };
+
+  return cuteIcons[type];
+}
+
+function withIcon(
+  icon: string,
+  text: string
+): string {
+  return icon
+    ? `${icon} ${text}`
+    : text;
+}
+
+function getAgentSeparator(
+  settings: GuildSettings
+): string {
+  const style =
+    getStyle(settings);
+
+  if (style === "cute") {
+    return " ♡ ";
+  }
+
+  if (style === "minimal") {
+    return ", ";
+  }
+
+  return " • ";
+}
+
+function getProfileDescription(
+  settings: GuildSettings,
+  username: string
+): string {
+  const style =
+    getStyle(settings);
+
+  if (style === "cute") {
+    return `୨୧ Valorant profile for **${username}** ୨୧`;
+  }
+
+  if (style === "minimal") {
+    return `Profile for **${username}**`;
+  }
+
+  return `Valorant profile for **${username}**`;
+}
+
+function getCompareTitle(
+  settings: GuildSettings
+): string {
+  const style =
+    getStyle(settings);
+
+  if (style === "cute") {
+    return withIcon(
+      getIcon(
+        settings,
+        "compare"
+      ),
+      "Player Matchup"
+    );
+  }
+
+  if (style === "minimal") {
+    return "Player Comparison";
+  }
+
+  return withIcon(
+    getIcon(
+      settings,
+      "compare"
+    ),
+    "Valorant Player Comparison"
+  );
+}
+
+function getVerificationText(
+  settings: GuildSettings,
+  verified: boolean
+): string {
+  if (verified) {
+    return withIcon(
+      getIcon(
+        settings,
+        "verified"
+      ),
+      "Riot verified"
+    );
+  }
+
+  return withIcon(
+    getIcon(
+      settings,
+      "warning"
+    ),
+    "Manual link — not Riot verified"
+  );
+}
+
+function buildSettingsEmbed(
+  settings: GuildSettings
+): EmbedBuilder {
+  const hexColor =
+    `#${settings.embed_color
+      .toString(16)
+      .padStart(6, "0")
+      .toUpperCase()}`;
+
+  return new EmbedBuilder()
+    .setColor(
+      settings.embed_color
+    )
+    .setTitle(
+      withIcon(
+        getIcon(
+          settings,
+          "settings"
+        ),
+        "Server Bot Settings"
+      )
+    )
+    .setDescription(
+      "These settings control how the bot looks in this server."
+    )
+    .addFields(
+      {
+        name: "Style",
+        value:
+          settings.style,
+        inline: true,
+      },
+      {
+        name: "Embed Color",
+        value:
+          hexColor,
+        inline: true,
+      },
+      {
+        name: "Emoji Style",
+        value:
+          settings.emoji_style,
+        inline: true,
+      },
+      {
+        name: "Footer",
+        value:
+          settings.footer_text,
+        inline: false,
+      }
+    )
+    .setFooter({
+      text:
+        "Server customization settings",
+    });
+}
+
+// --------------------------------------------------
 // Slash commands
 // --------------------------------------------------
 
 const commands = [
   new SlashCommandBuilder()
     .setName("ping")
-    .setDescription("Check whether the bot is online"),
+    .setDescription(
+      "Check whether the bot is online"
+    ),
 
   new SlashCommandBuilder()
     .setName("link")
-    .setDescription("Link your Discord account to a Riot ID")
+    .setDescription(
+      "Link your Discord account to a Riot ID"
+    )
     .addStringOption((option) =>
       option
         .setName("riot_id")
@@ -273,11 +622,15 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("profile")
-    .setDescription("View a Valorant player profile")
+    .setDescription(
+      "View a Valorant player profile"
+    )
     .addStringOption((option) =>
       option
         .setName("player")
-        .setDescription("Choose a mock player")
+        .setDescription(
+          "Choose a mock player"
+        )
         .setRequired(false)
         .addChoices(
           {
@@ -300,21 +653,140 @@ const commands = [
     ),
 
   new SlashCommandBuilder()
+    .setName("settings")
+    .setDescription(
+      "View or change this server's bot settings"
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("view")
+        .setDescription(
+          "View this server's current bot settings"
+        )
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("style")
+        .setDescription(
+          "Change this server's bot style"
+        )
+        .addStringOption((option) =>
+          option
+            .setName("style")
+            .setDescription(
+              "Choose an aesthetic"
+            )
+            .setRequired(true)
+            .addChoices(
+              {
+                name: "Cute",
+                value: "cute",
+              },
+              {
+                name: "Classic",
+                value: "classic",
+              },
+              {
+                name: "Minimal",
+                value: "minimal",
+              }
+            )
+        )
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("color")
+        .setDescription(
+          "Change the embed accent color"
+        )
+        .addStringOption((option) =>
+          option
+            .setName("hex")
+            .setDescription(
+              "Hex color, for example #FFB6C1"
+            )
+            .setRequired(true)
+        )
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("footer")
+        .setDescription(
+          "Change the embed footer text"
+        )
+        .addStringOption((option) =>
+          option
+            .setName("text")
+            .setDescription(
+              "Custom footer text"
+            )
+            .setRequired(true)
+            .setMinLength(1)
+            .setMaxLength(120)
+        )
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("emoji")
+        .setDescription(
+          "Change the emoji style"
+        )
+        .addStringOption((option) =>
+          option
+            .setName("style")
+            .setDescription(
+              "Choose an emoji style"
+            )
+            .setRequired(true)
+            .addChoices(
+              {
+                name: "Cute",
+                value: "cute",
+              },
+              {
+                name: "Normal",
+                value: "normal",
+              },
+              {
+                name: "None",
+                value: "none",
+              }
+            )
+        )
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("reset")
+        .setDescription(
+          "Reset this server to the default cute theme"
+        )
+    ),
+
+  new SlashCommandBuilder()
     .setName("compare")
-    .setDescription("Compare two linked Valorant players")
+    .setDescription(
+      "Compare two linked Valorant players"
+    )
     .addUserOption((option) =>
       option
         .setName("user1")
-        .setDescription("First Discord user")
+        .setDescription(
+          "First Discord user"
+        )
         .setRequired(true)
     )
     .addUserOption((option) =>
       option
         .setName("user2")
-        .setDescription("Second Discord user")
+        .setDescription(
+          "Second Discord user"
+        )
         .setRequired(true)
     ),
-].map((command) => command.toJSON());
+].map(
+  (command) =>
+    command.toJSON()
+);
 
 // --------------------------------------------------
 // Discord REST
@@ -322,10 +794,14 @@ const commands = [
 
 const rest = new REST({
   version: "10",
-}).setToken(DISCORD_TOKEN);
+}).setToken(
+  DISCORD_TOKEN
+);
 
 async function registerCommands() {
-  console.log("Registering slash commands...");
+  console.log(
+    "Registering slash commands..."
+  );
 
   await rest.put(
     Routes.applicationGuildCommands(
@@ -337,7 +813,9 @@ async function registerCommands() {
     }
   );
 
-  console.log("Slash commands registered.");
+  console.log(
+    "Slash commands registered."
+  );
 }
 
 // --------------------------------------------------
@@ -345,519 +823,1052 @@ async function registerCommands() {
 // --------------------------------------------------
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds],
+  intents: [
+    GatewayIntentBits.Guilds,
+  ],
 });
 
-client.once("clientReady", () => {
-  console.log(
-    `Logged in as ${client.user?.tag ?? "Unknown Bot"}`
-  );
-});
+client.once(
+  "clientReady",
+  () => {
+    console.log(
+      `Logged in as ${
+        client.user?.tag ??
+        "Unknown Bot"
+      }`
+    );
+  }
+);
 
 // --------------------------------------------------
 // Interactions
 // --------------------------------------------------
 
-client.on("interactionCreate", async (interaction) => {
-  if (!interaction.isChatInputCommand()) {
-    return;
-  }
-
-  try {
-    // ------------------------------------------------
-    // /ping
-    // ------------------------------------------------
-
-    if (interaction.commandName === "ping") {
-      await interaction.reply(
-        "🏓 Pong! Valorant Tracker Bot is online."
-      );
-
+client.on(
+  "interactionCreate",
+  async (interaction) => {
+    if (
+      !interaction.isChatInputCommand()
+    ) {
       return;
     }
 
-    // ------------------------------------------------
-    // /link
-    // ------------------------------------------------
+    try {
+      const settings =
+        interaction.guildId
+          ? getGuildSettings(
+              interaction.guildId
+            )
+          : getDefaultGuildSettings();
 
-    if (interaction.commandName === "link") {
-      const riotId =
-        interaction.options.getString("riot_id", true);
-
-      const hashIndex = riotId.lastIndexOf("#");
+      // ----------------------------------------------
+      // /ping
+      // ----------------------------------------------
 
       if (
-        hashIndex <= 0 ||
-        hashIndex === riotId.length - 1
+        interaction.commandName ===
+        "ping"
       ) {
+        await interaction.reply(
+          withIcon(
+            getIcon(
+              settings,
+              "ping"
+            ),
+            "Pong! Valorant Tracker Bot is online."
+          )
+        );
+
+        return;
+      }
+
+      // ----------------------------------------------
+      // /link
+      // ----------------------------------------------
+
+      if (
+        interaction.commandName ===
+        "link"
+      ) {
+        const riotId =
+          interaction.options.getString(
+            "riot_id",
+            true
+          );
+
+        const hashIndex =
+          riotId.lastIndexOf("#");
+
+        if (
+          hashIndex <= 0 ||
+          hashIndex ===
+            riotId.length - 1
+        ) {
+          await interaction.reply({
+            content:
+              "Please use the full Riot ID format, for example `Tapgod#NA1`.",
+            flags:
+              MessageFlags.Ephemeral,
+          });
+
+          return;
+        }
+
+        const riotName = riotId
+          .slice(
+            0,
+            hashIndex
+          )
+          .trim();
+
+        const riotTag = riotId
+          .slice(
+            hashIndex + 1
+          )
+          .trim();
+
+        if (
+          !riotName ||
+          !riotTag
+        ) {
+          await interaction.reply({
+            content:
+              "That Riot ID does not look valid. Use a format like `Tapgod#NA1`.",
+            flags:
+              MessageFlags.Ephemeral,
+          });
+
+          return;
+        }
+
+        saveLinkedAccountStatement.run(
+          interaction.user.id,
+          riotName,
+          riotTag
+        );
+
         await interaction.reply({
           content:
-            "Please use the full Riot ID format, for example `Tapgod#NA1`.",
-          flags: MessageFlags.Ephemeral,
+            `${withIcon(
+              getIcon(
+                settings,
+                "profile"
+              ),
+              `Linked your Discord account to **${riotName}#${riotTag}**.`
+            )}\n\n` +
+            getVerificationText(
+              settings,
+              false
+            ),
+          flags:
+            MessageFlags.Ephemeral,
         });
 
         return;
       }
 
-      const riotName = riotId
-        .slice(0, hashIndex)
-        .trim();
+      // ----------------------------------------------
+      // /unlink
+      // ----------------------------------------------
 
-      const riotTag = riotId
-        .slice(hashIndex + 1)
-        .trim();
+      if (
+        interaction.commandName ===
+        "unlink"
+      ) {
+        const linkedAccount =
+          getLinkedAccount(
+            interaction.user.id
+          );
 
-      if (!riotName || !riotTag) {
+        if (
+          !linkedAccount
+        ) {
+          await interaction.reply({
+            content:
+              "You do not currently have a Riot account linked.",
+            flags:
+              MessageFlags.Ephemeral,
+          });
+
+          return;
+        }
+
+        deleteLinkedAccountStatement.run(
+          interaction.user.id
+        );
+
         await interaction.reply({
           content:
-            "That Riot ID does not look valid. Use a format like `Tapgod#NA1`.",
-          flags: MessageFlags.Ephemeral,
+            withIcon(
+              getIcon(
+                settings,
+                "profile"
+              ),
+              `Unlinked **${linkedAccount.riot_name}#${linkedAccount.riot_tag}** from your Discord account.`
+            ),
+          flags:
+            MessageFlags.Ephemeral,
         });
 
         return;
       }
 
-      saveLinkedAccountStatement.run(
-        interaction.user.id,
-        riotName,
-        riotTag
-      );
+      // ----------------------------------------------
+      // /profile
+      // ----------------------------------------------
 
-      await interaction.reply({
-        content:
-          `Linked your Discord account to **${riotName}#${riotTag}**.\n\n` +
-          "⚠️ This is currently a manual link and has not been verified through Riot Sign On.",
-        flags: MessageFlags.Ephemeral,
-      });
+      if (
+        interaction.commandName ===
+        "profile"
+      ) {
+        const selectedPlayer =
+          interaction.options.getString(
+            "player"
+          );
 
-      return;
-    }
+        const selectedUser =
+          interaction.options.getUser(
+            "user"
+          );
 
-    // ------------------------------------------------
-    // /unlink
-    // ------------------------------------------------
+        // --------------------------------------------
+        // Mock profile
+        // --------------------------------------------
 
-    if (interaction.commandName === "unlink") {
-      const linkedAccount =
-        getLinkedAccount(interaction.user.id);
+        if (
+          selectedPlayer
+        ) {
+          const player =
+            players[
+              selectedPlayer
+            ];
 
-      if (!linkedAccount) {
+          if (!player) {
+            await interaction.reply(
+              "That mock player could not be found."
+            );
+
+            return;
+          }
+
+          const totalGames =
+            player.wins +
+            player.losses;
+
+          const winRate =
+            totalGames > 0
+              ? (
+                  (player.wins /
+                    totalGames) *
+                  100
+                ).toFixed(1)
+              : "0.0";
+
+          const profileEmbed =
+            new EmbedBuilder()
+              .setColor(
+                settings.embed_color
+              )
+              .setTitle(
+                withIcon(
+                  getIcon(
+                    settings,
+                    "profile"
+                  ),
+                  `${player.riotName}#${player.tag}`
+                )
+              )
+              .setDescription(
+                getProfileDescription(
+                  settings,
+                  selectedPlayer
+                )
+              )
+              .addFields(
+                {
+                  name:
+                    "Current Rank",
+                  value:
+                    player.currentRank,
+                  inline: true,
+                },
+                {
+                  name:
+                    "Peak Rank",
+                  value:
+                    player.peakRank,
+                  inline: true,
+                },
+                {
+                  name:
+                    "Win Rate",
+                  value:
+                    `${winRate}%`,
+                  inline: true,
+                },
+                {
+                  name: "K/D",
+                  value:
+                    player.kd.toFixed(
+                      2
+                    ),
+                  inline: true,
+                },
+                {
+                  name: "ACS",
+                  value:
+                    player.acs.toString(),
+                  inline: true,
+                },
+                {
+                  name:
+                    "Headshot %",
+                  value:
+                    `${player.headshotPercentage}%`,
+                  inline: true,
+                },
+                {
+                  name:
+                    "Record",
+                  value:
+                    `${player.wins}W - ${player.losses}L`,
+                  inline: true,
+                },
+                {
+                  name:
+                    "Main Agents",
+                  value:
+                    player.mainAgents.join(
+                      getAgentSeparator(
+                        settings
+                      )
+                    ),
+                  inline: true,
+                }
+              )
+              .setFooter({
+                text:
+                  `${settings.footer_text} • Mock Data`,
+              });
+
+          await interaction.reply({
+            embeds: [
+              profileEmbed,
+            ],
+          });
+
+          return;
+        }
+
+        // --------------------------------------------
+        // Linked profile
+        // --------------------------------------------
+
+        const targetUser =
+          selectedUser ??
+          interaction.user;
+
+        const linkedAccount =
+          getLinkedAccount(
+            targetUser.id
+          );
+
+        if (
+          !linkedAccount
+        ) {
+          if (
+            targetUser.id ===
+            interaction.user.id
+          ) {
+            await interaction.reply({
+              content:
+                "You haven't linked a Riot account yet. Use `/link` first.",
+              flags:
+                MessageFlags.Ephemeral,
+            });
+          } else {
+            await interaction.reply(
+              `${targetUser.username} hasn't linked a Riot account yet.`
+            );
+          }
+
+          return;
+        }
+
+        // --------------------------------------------
+        // Future Riot-verified profile
+        // --------------------------------------------
+
+        if (
+          linkedAccount.link_method ===
+            "rso" &&
+          linkedAccount.riot_puuid
+        ) {
+          const riotStats =
+            await riotService.getPlayerStats(
+              linkedAccount.riot_puuid
+            );
+
+          if (
+            riotStats
+          ) {
+            const totalGames =
+              riotStats.wins +
+              riotStats.losses;
+
+            const winRate =
+              totalGames > 0
+                ? (
+                    (riotStats.wins /
+                      totalGames) *
+                    100
+                  ).toFixed(1)
+                : "0.0";
+
+            const statsEmbed =
+              new EmbedBuilder()
+                .setColor(
+                  settings.embed_color
+                )
+                .setTitle(
+                  withIcon(
+                    getIcon(
+                      settings,
+                      "profile"
+                    ),
+                    `${riotStats.riotName}#${riotStats.riotTag}`
+                  )
+                )
+                .setDescription(
+                  getProfileDescription(
+                    settings,
+                    targetUser.username
+                  )
+                )
+                .addFields(
+                  {
+                    name:
+                      "Current Rank",
+                    value:
+                      riotStats.currentRank ??
+                      "Unavailable",
+                    inline: true,
+                  },
+                  {
+                    name:
+                      "Peak Rank",
+                    value:
+                      riotStats.peakRank ??
+                      "Unavailable",
+                    inline: true,
+                  },
+                  {
+                    name:
+                      "Win Rate",
+                    value:
+                      `${winRate}%`,
+                    inline: true,
+                  },
+                  {
+                    name:
+                      "K/D",
+                    value:
+                      riotStats.kd?.toFixed(
+                        2
+                      ) ??
+                      "Unavailable",
+                    inline: true,
+                  },
+                  {
+                    name:
+                      "ACS",
+                    value:
+                      riotStats.acs?.toString() ??
+                      "Unavailable",
+                    inline: true,
+                  },
+                  {
+                    name:
+                      "Headshot %",
+                    value:
+                      riotStats.headshotPercentage !==
+                      null
+                        ? `${riotStats.headshotPercentage}%`
+                        : "Unavailable",
+                    inline: true,
+                  },
+                  {
+                    name:
+                      "Record",
+                    value:
+                      `${riotStats.wins}W - ${riotStats.losses}L`,
+                    inline: true,
+                  },
+                  {
+                    name:
+                      "Main Agents",
+                    value:
+                      riotStats.mainAgents.length >
+                      0
+                        ? riotStats.mainAgents.join(
+                            getAgentSeparator(
+                              settings
+                            )
+                          )
+                        : "Unavailable",
+                    inline: true,
+                  },
+                  {
+                    name:
+                      "Verification",
+                    value:
+                      getVerificationText(
+                        settings,
+                        true
+                      ),
+                    inline: false,
+                  }
+                )
+                .setFooter({
+                  text:
+                    settings.footer_text,
+                });
+
+            await interaction.reply({
+              embeds: [
+                statsEmbed,
+              ],
+            });
+
+            return;
+          }
+
+          await interaction.reply({
+            content:
+              `${getVerificationText(
+                settings,
+                true
+              )}\n\nVALORANT stats are currently unavailable. Please try again later.`,
+            flags:
+              MessageFlags.Ephemeral,
+          });
+
+          return;
+        }
+
+        // --------------------------------------------
+        // Manual profile
+        // --------------------------------------------
+
+        const linkedEmbed =
+          new EmbedBuilder()
+            .setColor(
+              settings.embed_color
+            )
+            .setTitle(
+              withIcon(
+                getIcon(
+                  settings,
+                  "profile"
+                ),
+                `${linkedAccount.riot_name}#${linkedAccount.riot_tag}`
+              )
+            )
+            .setDescription(
+              getProfileDescription(
+                settings,
+                targetUser.username
+              )
+            )
+            .addFields(
+              {
+                name:
+                  "Riot ID",
+                value:
+                  `**${linkedAccount.riot_name}#${linkedAccount.riot_tag}**`,
+                inline: true,
+              },
+              {
+                name:
+                  "Verification",
+                value:
+                  getVerificationText(
+                    settings,
+                    linkedAccount.link_method ===
+                      "rso"
+                  ),
+                inline: true,
+              }
+            )
+            .setFooter({
+              text:
+                settings.footer_text,
+            });
+
         await interaction.reply({
-          content:
-            "You do not currently have a Riot account linked.",
-          flags: MessageFlags.Ephemeral,
+          embeds: [
+            linkedEmbed,
+          ],
         });
 
         return;
       }
 
-      deleteLinkedAccountStatement.run(
-        interaction.user.id
-      );
+      // ----------------------------------------------
+      // /settings
+      // ----------------------------------------------
 
-      await interaction.reply({
-        content:
-          `Unlinked **${linkedAccount.riot_name}#${linkedAccount.riot_tag}** from your Discord account.`,
-        flags: MessageFlags.Ephemeral,
-      });
+      if (
+        interaction.commandName ===
+        "settings"
+      ) {
+        if (
+          !interaction.guildId
+        ) {
+          await interaction.reply({
+            content:
+              "Server settings can only be used inside a Discord server.",
+            flags:
+              MessageFlags.Ephemeral,
+          });
 
-      return;
-    }
+          return;
+        }
 
-    // ------------------------------------------------
-    // /profile
-    // ------------------------------------------------
+        const subcommand =
+          interaction.options.getSubcommand();
 
-    if (interaction.commandName === "profile") {
-      const selectedPlayer =
-        interaction.options.getString("player");
+        if (
+          subcommand ===
+          "view"
+        ) {
+          await interaction.reply({
+            embeds: [
+              buildSettingsEmbed(
+                getGuildSettings(
+                  interaction.guildId
+                )
+              ),
+            ],
+            flags:
+              MessageFlags.Ephemeral,
+          });
 
-      const selectedUser =
-        interaction.options.getUser("user");
+          return;
+        }
 
-      // Mock player profile
-      if (selectedPlayer) {
-        const player = players[selectedPlayer];
+        const canManageServer =
+          interaction.memberPermissions?.has(
+            PermissionFlagsBits.ManageGuild
+          ) ??
+          false;
 
-        if (!player) {
+        if (
+          !canManageServer
+        ) {
+          await interaction.reply({
+            content:
+              "You need the **Manage Server** permission to change bot settings.",
+            flags:
+              MessageFlags.Ephemeral,
+          });
+
+          return;
+        }
+
+        if (
+          subcommand ===
+          "style"
+        ) {
+          const style =
+            interaction.options.getString(
+              "style",
+              true
+            );
+
+          updateGuildStyleStatement.run(
+            style,
+            interaction.guildId
+          );
+
+          const updatedSettings =
+            getGuildSettings(
+              interaction.guildId
+            );
+
+          await interaction.reply({
+            content:
+              `Server style changed to **${style}**.`,
+            embeds: [
+              buildSettingsEmbed(
+                updatedSettings
+              ),
+            ],
+            flags:
+              MessageFlags.Ephemeral,
+          });
+
+          return;
+        }
+
+        if (
+          subcommand ===
+          "color"
+        ) {
+          const rawColor =
+            interaction.options
+              .getString(
+                "hex",
+                true
+              )
+              .trim();
+
+          const normalizedColor =
+            rawColor.startsWith(
+              "#"
+            )
+              ? rawColor.slice(1)
+              : rawColor;
+
+          if (
+            !/^[0-9A-Fa-f]{6}$/.test(
+              normalizedColor
+            )
+          ) {
+            await interaction.reply({
+              content:
+                "Please use a 6-digit hex color such as `#FFB6C1`.",
+              flags:
+                MessageFlags.Ephemeral,
+            });
+
+            return;
+          }
+
+          const colorValue =
+            Number.parseInt(
+              normalizedColor,
+              16
+            );
+
+          updateGuildColorStatement.run(
+            colorValue,
+            interaction.guildId
+          );
+
+          const updatedSettings =
+            getGuildSettings(
+              interaction.guildId
+            );
+
+          await interaction.reply({
+            content:
+              `Embed color changed to **#${normalizedColor.toUpperCase()}**.`,
+            embeds: [
+              buildSettingsEmbed(
+                updatedSettings
+              ),
+            ],
+            flags:
+              MessageFlags.Ephemeral,
+          });
+
+          return;
+        }
+
+        if (
+          subcommand ===
+          "footer"
+        ) {
+          const footerText =
+            interaction.options
+              .getString(
+                "text",
+                true
+              )
+              .trim();
+
+          if (
+            !footerText
+          ) {
+            await interaction.reply({
+              content:
+                "Footer text cannot be empty.",
+              flags:
+                MessageFlags.Ephemeral,
+            });
+
+            return;
+          }
+
+          updateGuildFooterStatement.run(
+            footerText,
+            interaction.guildId
+          );
+
+          const updatedSettings =
+            getGuildSettings(
+              interaction.guildId
+            );
+
+          await interaction.reply({
+            content:
+              "Footer updated.",
+            embeds: [
+              buildSettingsEmbed(
+                updatedSettings
+              ),
+            ],
+            flags:
+              MessageFlags.Ephemeral,
+          });
+
+          return;
+        }
+
+        if (
+          subcommand ===
+          "emoji"
+        ) {
+          const emojiStyle =
+            interaction.options.getString(
+              "style",
+              true
+            );
+
+          updateGuildEmojiStatement.run(
+            emojiStyle,
+            interaction.guildId
+          );
+
+          const updatedSettings =
+            getGuildSettings(
+              interaction.guildId
+            );
+
+          await interaction.reply({
+            content:
+              `Emoji style changed to **${emojiStyle}**.`,
+            embeds: [
+              buildSettingsEmbed(
+                updatedSettings
+              ),
+            ],
+            flags:
+              MessageFlags.Ephemeral,
+          });
+
+          return;
+        }
+
+        if (
+          subcommand ===
+          "reset"
+        ) {
+          resetGuildSettingsStatement.run(
+            interaction.guildId
+          );
+
+          const updatedSettings =
+            getGuildSettings(
+              interaction.guildId
+            );
+
+          await interaction.reply({
+            content:
+              "Server bot settings have been reset to the default cute theme.",
+            embeds: [
+              buildSettingsEmbed(
+                updatedSettings
+              ),
+            ],
+            flags:
+              MessageFlags.Ephemeral,
+          });
+
+          return;
+        }
+      }
+
+      // ----------------------------------------------
+      // /compare
+      // ----------------------------------------------
+
+      if (
+        interaction.commandName ===
+        "compare"
+      ) {
+        const user1 =
+          interaction.options.getUser(
+            "user1",
+            true
+          );
+
+        const user2 =
+          interaction.options.getUser(
+            "user2",
+            true
+          );
+
+        if (
+          user1.id ===
+          user2.id
+        ) {
+          await interaction.reply({
+            content:
+              "Choose two different Discord users to compare.",
+            flags:
+              MessageFlags.Ephemeral,
+          });
+
+          return;
+        }
+
+        const account1 =
+          getLinkedAccount(
+            user1.id
+          );
+
+        const account2 =
+          getLinkedAccount(
+            user2.id
+          );
+
+        if (
+          !account1 &&
+          !account2
+        ) {
           await interaction.reply(
-            "That mock player could not be found."
+            `Neither ${user1.username} nor ${user2.username} has linked a Riot account yet.`
           );
 
           return;
         }
 
-        const totalGames =
-          player.wins + player.losses;
+        if (
+          !account1
+        ) {
+          await interaction.reply(
+            `${user1.username} hasn't linked a Riot account yet.`
+          );
 
-        const winRate =
-          totalGames > 0
-            ? (
-                (player.wins / totalGames) *
-                100
-              ).toFixed(1)
-            : "0.0";
+          return;
+        }
 
-        const profileEmbed = new EmbedBuilder()
-          .setColor(0xff4655)
-          .setTitle(
-            `${player.riotName}#${player.tag}`
-          )
-          .setDescription(
-            "Valorant Player Profile"
-          )
-          .addFields(
-            {
-              name: "Current Rank",
-              value: player.currentRank,
-              inline: true,
-            },
-            {
-              name: "Peak Rank",
-              value: player.peakRank,
-              inline: true,
-            },
-            {
-              name: "Win Rate",
-              value: `${winRate}%`,
-              inline: true,
-            },
-            {
-              name: "K/D",
-              value: player.kd.toFixed(2),
-              inline: true,
-            },
-            {
-              name: "ACS",
-              value: player.acs.toString(),
-              inline: true,
-            },
-            {
-              name: "Headshot %",
-              value: `${player.headshotPercentage}%`,
-              inline: true,
-            },
-            {
-              name: "Record",
-              value:
-                `${player.wins}W - ${player.losses}L`,
-              inline: true,
-            },
-            {
-              name: "Main Agents",
-              value:
-                player.mainAgents.join(" • "),
-              inline: true,
-            }
-          )
-          .setFooter({
-            text:
-              "Valorant Tracker Bot • Mock Data",
-          });
+        if (
+          !account2
+        ) {
+          await interaction.reply(
+            `${user2.username} hasn't linked a Riot account yet.`
+          );
+
+          return;
+        }
+
+        const account1Verification =
+          getVerificationText(
+            settings,
+            account1.link_method ===
+              "rso"
+          );
+
+        const account2Verification =
+          getVerificationText(
+            settings,
+            account2.link_method ===
+              "rso"
+          );
+
+        const comparisonEmbed =
+          new EmbedBuilder()
+            .setColor(
+              settings.embed_color
+            )
+            .setTitle(
+              getCompareTitle(
+                settings
+              )
+            )
+            .setDescription(
+              getStyle(
+                settings
+              ) === "cute"
+                ? `**${user1.username}** ♡ **${user2.username}**`
+                : `**${user1.username}** vs **${user2.username}**`
+            )
+            .addFields(
+              {
+                name:
+                  user1.username,
+                value:
+                  `**${account1.riot_name}#${account1.riot_tag}**\n${account1Verification}`,
+                inline: true,
+              },
+              {
+                name:
+                  getStyle(
+                    settings
+                  ) ===
+                  "cute"
+                    ? "♡"
+                    : "VS",
+                value:
+                  getStyle(
+                    settings
+                  ) ===
+                  "cute"
+                    ? "୨୧"
+                    : "vs",
+                inline: true,
+              },
+              {
+                name:
+                  user2.username,
+                value:
+                  `**${account2.riot_name}#${account2.riot_tag}**\n${account2Verification}`,
+                inline: true,
+              }
+            )
+            .setFooter({
+              text:
+                settings.footer_text,
+            });
 
         await interaction.reply({
-          embeds: [profileEmbed],
+          embeds: [
+            comparisonEmbed,
+          ],
         });
 
         return;
       }
+    } catch (error) {
+      console.error(
+        "Interaction error:",
+        error
+      );
 
-      // Linked Discord account
-      const targetUser =
-        selectedUser ?? interaction.user;
-
-      const linkedAccount =
-        getLinkedAccount(targetUser.id);
-
-      if (!linkedAccount) {
-        if (
-          targetUser.id === interaction.user.id
-        ) {
-          await interaction.reply({
-            content:
-              "You haven't linked a Riot account yet. Use `/link` first.",
-            flags: MessageFlags.Ephemeral,
-          });
-        } else {
-          await interaction.reply(
-            `${targetUser.username} hasn't linked a Riot account yet.`
-          );
-        }
-
-        return;
-      }
-if (
-  linkedAccount.link_method === "rso" &&
-  linkedAccount.riot_puuid
-) {
-  const riotStats =
-    await riotService.getPlayerStats(
-      linkedAccount.riot_puuid
-    );
-
-  if (riotStats) {
-    const totalGames =
-      riotStats.wins + riotStats.losses;
-
-    const winRate =
-      totalGames > 0
-        ? (
-            (riotStats.wins / totalGames) *
-            100
-          ).toFixed(1)
-        : "0.0";
-
-    const statsEmbed = new EmbedBuilder()
-      .setColor(0xff4655)
-      .setTitle(
-        `${riotStats.riotName}#${riotStats.riotTag}`
-      )
-      .setDescription(
-        `Verified Valorant profile for **${targetUser.username}**`
-      )
-      .addFields(
-        {
-          name: "Current Rank",
-          value:
-            riotStats.currentRank ?? "Unavailable",
-          inline: true,
-        },
-        {
-          name: "Peak Rank",
-          value:
-            riotStats.peakRank ?? "Unavailable",
-          inline: true,
-        },
-        {
-          name: "Win Rate",
-          value: `${winRate}%`,
-          inline: true,
-        },
-        {
-          name: "K/D",
-          value:
-            riotStats.kd?.toFixed(2) ??
-            "Unavailable",
-          inline: true,
-        },
-        {
-          name: "ACS",
-          value:
-            riotStats.acs?.toString() ??
-            "Unavailable",
-          inline: true,
-        },
-        {
-          name: "Headshot %",
-          value:
-            riotStats.headshotPercentage !== null
-              ? `${riotStats.headshotPercentage}%`
-              : "Unavailable",
-          inline: true,
-        },
-        {
-          name: "Record",
-          value:
-            `${riotStats.wins}W - ${riotStats.losses}L`,
-          inline: true,
-        },
-        {
-          name: "Main Agents",
-          value:
-            riotStats.mainAgents.length > 0
-              ? riotStats.mainAgents.join(" • ")
-              : "Unavailable",
-          inline: true,
-        }
-      )
-      .setFooter({
-        text:
-          "Valorant Tracker Bot • Riot verified",
-      });
-
-    await interaction.reply({
-      embeds: [statsEmbed],
-    });
-
-    return;
-  }
-await interaction.reply({
-  content:
-    `✅ **${linkedAccount.riot_name}#${linkedAccount.riot_tag}** is verified through Riot Sign On, but VALORANT stats are currently unavailable. Please try again later.`,
-  flags: MessageFlags.Ephemeral,
-});
-
-return;
-}
-
-      const verificationText =
-        linkedAccount.link_method === "rso"
-          ? "✅ Verified via Riot Sign On"
-          : "⚠️ Manual link — not Riot verified";
-
-      const linkedEmbed = new EmbedBuilder()
-        .setColor(0xff4655)
-        .setTitle(
-          `${linkedAccount.riot_name}#${linkedAccount.riot_tag}`
-        )
-        .setDescription(
-          `Linked Valorant account for **${targetUser.username}**`
-        )
-        .addFields(
-          {
-            name: "Riot ID",
-            value:
-              `**${linkedAccount.riot_name}#${linkedAccount.riot_tag}**`,
-            inline: true,
-          },
-          {
-            name: "Verification",
-            value: verificationText,
-            inline: true,
-          }
-        )
-        .setFooter({
-          text:
-            "Valorant Tracker Bot • Real stats coming next",
+      if (
+        interaction.replied ||
+        interaction.deferred
+      ) {
+        await interaction.followUp({
+          content:
+            "Something went wrong while running that command.",
+          flags:
+            MessageFlags.Ephemeral,
         });
-
-      await interaction.reply({
-        embeds: [linkedEmbed],
-      });
-
-      return;
-    }
-
-    // ------------------------------------------------
-    // /compare
-    // ------------------------------------------------
-
-    if (interaction.commandName === "compare") {
-      const user1 =
-        interaction.options.getUser(
-          "user1",
-          true
-        );
-
-      const user2 =
-        interaction.options.getUser(
-          "user2",
-          true
-        );
-
-      if (user1.id === user2.id) {
+      } else {
         await interaction.reply({
           content:
-            "Choose two different Discord users to compare.",
-          flags: MessageFlags.Ephemeral,
+            "Something went wrong while running that command.",
+          flags:
+            MessageFlags.Ephemeral,
         });
-
-        return;
       }
-
-      const account1 =
-        getLinkedAccount(user1.id);
-
-      const account2 =
-        getLinkedAccount(user2.id);
-
-      if (!account1 && !account2) {
-        await interaction.reply(
-          `Neither ${user1.username} nor ${user2.username} has linked a Riot account yet.`
-        );
-
-        return;
-      }
-
-      if (!account1) {
-        await interaction.reply(
-          `${user1.username} hasn't linked a Riot account yet.`
-        );
-
-        return;
-      }
-
-      if (!account2) {
-        await interaction.reply(
-          `${user2.username} hasn't linked a Riot account yet.`
-        );
-
-        return;
-      }
-
-      const account1Verification =
-        account1.link_method === "rso"
-          ? "✅ Riot verified"
-          : "⚠️ Manual link";
-
-      const account2Verification =
-        account2.link_method === "rso"
-          ? "✅ Riot verified"
-          : "⚠️ Manual link";
-
-      const comparisonEmbed =
-        new EmbedBuilder()
-          .setColor(0xff4655)
-          .setTitle(
-            "⚔️ Valorant Player Comparison"
-          )
-          .setDescription(
-            `**${user1.username}** vs **${user2.username}**`
-          )
-          .addFields(
-            {
-              name: user1.username,
-              value:
-                `**${account1.riot_name}#${account1.riot_tag}**\n${account1Verification}`,
-              inline: true,
-            },
-            {
-              name: "VS",
-              value: "⚔️",
-              inline: true,
-            },
-            {
-              name: user2.username,
-              value:
-                `**${account2.riot_name}#${account2.riot_tag}**\n${account2Verification}`,
-              inline: true,
-            }
-          )
-          .setFooter({
-            text:
-              "Valorant Tracker Bot • Linked accounts",
-          });
-
-      await interaction.reply({
-        embeds: [comparisonEmbed],
-      });
-
-      return;
-    }
-  } catch (error) {
-    console.error(
-      "Interaction error:",
-      error
-    );
-
-    if (
-      interaction.replied ||
-      interaction.deferred
-    ) {
-      await interaction.followUp({
-        content:
-          "Something went wrong while running that command.",
-        flags: MessageFlags.Ephemeral,
-      });
-    } else {
-      await interaction.reply({
-        content:
-          "Something went wrong while running that command.",
-        flags: MessageFlags.Ephemeral,
-      });
     }
   }
-});
+);
 
 // --------------------------------------------------
 // Start bot
