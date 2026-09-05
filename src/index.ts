@@ -14,6 +14,8 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
+import { riotService } from "./services/riot";
+
 // --------------------------------------------------
 // Environment variables
 // --------------------------------------------------
@@ -584,6 +586,109 @@ client.on("interactionCreate", async (interaction) => {
 
         return;
       }
+if (
+  linkedAccount.link_method === "rso" &&
+  linkedAccount.riot_puuid
+) {
+  const riotStats =
+    await riotService.getPlayerStats(
+      linkedAccount.riot_puuid
+    );
+
+  if (riotStats) {
+    const totalGames =
+      riotStats.wins + riotStats.losses;
+
+    const winRate =
+      totalGames > 0
+        ? (
+            (riotStats.wins / totalGames) *
+            100
+          ).toFixed(1)
+        : "0.0";
+
+    const statsEmbed = new EmbedBuilder()
+      .setColor(0xff4655)
+      .setTitle(
+        `${riotStats.riotName}#${riotStats.riotTag}`
+      )
+      .setDescription(
+        `Verified Valorant profile for **${targetUser.username}**`
+      )
+      .addFields(
+        {
+          name: "Current Rank",
+          value:
+            riotStats.currentRank ?? "Unavailable",
+          inline: true,
+        },
+        {
+          name: "Peak Rank",
+          value:
+            riotStats.peakRank ?? "Unavailable",
+          inline: true,
+        },
+        {
+          name: "Win Rate",
+          value: `${winRate}%`,
+          inline: true,
+        },
+        {
+          name: "K/D",
+          value:
+            riotStats.kd?.toFixed(2) ??
+            "Unavailable",
+          inline: true,
+        },
+        {
+          name: "ACS",
+          value:
+            riotStats.acs?.toString() ??
+            "Unavailable",
+          inline: true,
+        },
+        {
+          name: "Headshot %",
+          value:
+            riotStats.headshotPercentage !== null
+              ? `${riotStats.headshotPercentage}%`
+              : "Unavailable",
+          inline: true,
+        },
+        {
+          name: "Record",
+          value:
+            `${riotStats.wins}W - ${riotStats.losses}L`,
+          inline: true,
+        },
+        {
+          name: "Main Agents",
+          value:
+            riotStats.mainAgents.length > 0
+              ? riotStats.mainAgents.join(" • ")
+              : "Unavailable",
+          inline: true,
+        }
+      )
+      .setFooter({
+        text:
+          "Valorant Tracker Bot • Riot verified",
+      });
+
+    await interaction.reply({
+      embeds: [statsEmbed],
+    });
+
+    return;
+  }
+await interaction.reply({
+  content:
+    `✅ **${linkedAccount.riot_name}#${linkedAccount.riot_tag}** is verified through Riot Sign On, but VALORANT stats are currently unavailable. Please try again later.`,
+  flags: MessageFlags.Ephemeral,
+});
+
+return;
+}
 
       const verificationText =
         linkedAccount.link_method === "rso"
