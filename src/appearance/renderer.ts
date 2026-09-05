@@ -70,6 +70,7 @@ export type ComparisonPlayerRenderData = {
   acs?: number | null;
 
   verified?: boolean;
+  verificationText?: string | null;
 };
 
 export type ComparisonRenderData = {
@@ -571,10 +572,15 @@ function comparisonSummary(
     );
   }
 
+  const verificationText =
+    player.verificationText?.trim();
+
   parts.push(
-    player.verified
-      ? "Riot verified"
-      : "Manual link"
+    verificationText
+      ? verificationText
+      : player.verified
+        ? "Riot verified"
+        : "Manual link"
   );
 
   return parts.join(

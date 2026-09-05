@@ -20,6 +20,7 @@ import { ensureAppearanceV2Column } from "./appearance/migrate";
 import { createAppearanceV2Store } from "./appearance/store";
 import { appearanceV2FromLegacy } from "./appearance/defaults";
 import {
+  buildComparisonEmbedV2,
   buildLinkedProfileEmbedV2,
   buildProfileEmbedV2,
 } from "./appearance/renderer";
@@ -2142,64 +2143,87 @@ client.on(
               "rso"
           );
 
-        const comparisonEmbed =
-          new EmbedBuilder()
-            .setColor(
-              settings.embed_color
-            )
-            .setTitle(
-              getCompareTitle(
-                settings
+        const appearance =
+          interaction.guildId
+            ? appearanceV2Store.getOrCreate(
+                interaction.guildId,
+                toLegacyAppearanceSettings(
+                  settings
+                )
               )
-            )
-            .setDescription(
-              getStyle(
-                settings
-              ) ===
-                "cute"
-                ? `**${user1.username}** ♡ **${user2.username}**`
-                : `**${user1.username}** vs **${user2.username}**`
-            )
-            .addFields(
-              {
-                name:
+            : appearanceV2FromLegacy(
+                toLegacyAppearanceSettings(
+                  settings
+                )
+              );
+
+        const manifest =
+          await appearanceAssetManifestService.getManifest();
+
+        const assetResolver =
+          new ManifestAppearanceAssetResolver(
+            manifest
+          );
+
+        const assets =
+          await assetResolver.resolveComparisonAssets(
+            appearance,
+            {
+              guildId:
+                interaction.guildId,
+
+              serverIconUrl:
+                interaction.guild?.iconURL() ??
+                null,
+            }
+          );
+
+        // Current /compare is still identity-only because Riot
+        // stats are not configured yet. V2 keeps that behavior
+        // while moving presentation/layout to the new renderer.
+        const comparisonEmbed =
+          buildComparisonEmbedV2(
+            {
+              left: {
+                label:
                   user1.username,
-                value:
-                  `**${account1.riot_name}#${account1.riot_tag}**\n${account1Verification}`,
-                inline:
-                  true,
+
+                riotName:
+                  account1.riot_name,
+
+                riotTag:
+                  account1.riot_tag,
+
+                verified:
+                  account1.link_method ===
+                  "rso",
+
+                verificationText:
+                  account1Verification,
               },
-              {
-                name:
-                  getStyle(
-                    settings
-                  ) ===
-                  "cute"
-                    ? "♡"
-                    : "VS",
-                value:
-                  getStyle(
-                    settings
-                  ) ===
-                  "cute"
-                    ? "୨୧"
-                    : "vs",
-                inline:
-                  true,
-              },
-              {
-                name:
+
+              right: {
+                label:
                   user2.username,
-                value:
-                  `**${account2.riot_name}#${account2.riot_tag}**\n${account2Verification}`,
-                inline:
-                  true,
-              }
-            )
-            .setFooter({
-              text:
-                settings.footer_text,
-            });
+
+                riotName:
+                  account2.riot_name,
+
+                riotTag:
+                  account2.riot_tag,
+
+                verified:
+                  account2.link_method ===
+                  "rso",
+
+                verificationText:
+                  account2Verification,
+              },
+            },
+
+            appearance,
+            assets
+          );
 
         await interaction.reply({
           embeds: [
