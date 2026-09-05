@@ -16,6 +16,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { riotService } from "./services/riot";
+import { ensureAppearanceV2Column } from "./appearance/migrate";
 import {
   dashboardSettingsService,
   type DashboardGuildSettings,
@@ -168,6 +169,10 @@ db.exec(`
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )
 `);
+
+// Cosmetics V2 is introduced alongside the existing settings.
+// The bot still renders with the V1 fields for now.
+ensureAppearanceV2Column(db);
 
 // --------------------------------------------------
 // Types
