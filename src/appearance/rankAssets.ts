@@ -1,8 +1,9 @@
 import type {
+  ValorantRankKey,
   ValorantRankTier,
 } from "./assetManifest";
 
-const RANK_PATTERNS: Array<{
+const TIER_PATTERNS: Array<{
   pattern: RegExp;
   tier: ValorantRankTier;
 }> = [
@@ -77,7 +78,7 @@ export function normalizeRankTier(
 
   for (
     const entry of
-    RANK_PATTERNS
+    TIER_PATTERNS
   ) {
     if (
       entry.pattern.test(
@@ -89,4 +90,41 @@ export function normalizeRankTier(
   }
 
   return null;
+}
+
+export function normalizeRankKey(
+  rankName:
+    | string
+    | null
+    | undefined
+): ValorantRankKey | null {
+  const tier =
+    normalizeRankTier(
+      rankName
+    );
+
+  if (!tier) {
+    return null;
+  }
+
+  if (
+    tier === "radiant"
+  ) {
+    return "radiant";
+  }
+
+  const raw =
+    rankName?.trim() ?? "";
+
+  const divisionMatch =
+    raw.match(
+      /\b([123])\b/
+    );
+
+  if (!divisionMatch) {
+    return null;
+  }
+
+  return `${tier}${divisionMatch[1]}` as
+    ValorantRankKey;
 }

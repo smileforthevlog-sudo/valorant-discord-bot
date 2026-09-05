@@ -16,6 +16,7 @@ import {
 } from "./agentAssets";
 
 import {
+  normalizeRankKey,
   normalizeRankTier,
 } from "./rankAssets";
 
@@ -23,13 +24,10 @@ import {
 // Cosmetics V2 asset-resolution engine
 // --------------------------------------------------
 //
-// The renderer only needs final public HTTPS URLs.
-// This resolver decides which URL should occupy each
-// Discord embed image slot.
-//
-// Actual Riot asset files are imported separately.
-// That keeps the renderer independent from Riot patch
-// versions, file names, storage providers and uploads.
+// Exact competitive rank emblems are preferred.
+// Example: "Diamond 2" -> ranks.diamond2.
+// If an exact division image is unavailable, the resolver
+// falls back to ranks.diamond for compatibility.
 // --------------------------------------------------
 
 export type PlayerVisualContext = {
@@ -100,6 +98,24 @@ function rankUrl(
     | null
     | undefined
 ): string | null {
+  const exactKey =
+    normalizeRankKey(
+      rankName
+    );
+
+  if (exactKey) {
+    const exact =
+      cleanHttpsUrl(
+        manifest.ranks[
+          exactKey
+        ]
+      );
+
+    if (exact) {
+      return exact;
+    }
+  }
+
   const tier =
     normalizeRankTier(
       rankName
@@ -239,9 +255,6 @@ function resolveProfileLargeImage(
     return resolved;
   }
 
-  // Discord only has one native large-image slot.
-  // If the explicit large-image mode did not resolve,
-  // allow the decorative header setting to fill it.
   switch (
     appearance.images.header.mode
   ) {

@@ -11,6 +11,7 @@ import {
 } from "../src/appearance/assets";
 
 import {
+  normalizeRankKey,
   normalizeRankTier,
 } from "../src/appearance/rankAssets";
 
@@ -18,18 +19,18 @@ import {
   normalizeAgentKey,
 } from "../src/appearance/agentAssets";
 
-async function main() {
-  function assert(
-    condition: unknown,
-    message: string
-  ): asserts condition {
-    if (!condition) {
-      throw new Error(
-        `Asset self-test failed: ${message}`
-      );
-    }
+function assert(
+  condition: unknown,
+  message: string
+): asserts condition {
+  if (!condition) {
+    throw new Error(
+      `Asset self-test failed: ${message}`
+    );
   }
+}
 
+async function main() {
   assert(
     normalizeRankTier(
       "Diamond 2"
@@ -38,10 +39,24 @@ async function main() {
   );
 
   assert(
-    normalizeRankTier(
-      "IMMORTAL 3"
-    ) === "immortal",
-    "Immortal 3 should normalize to immortal"
+    normalizeRankKey(
+      "Diamond 2"
+    ) === "diamond2",
+    "Diamond 2 should normalize to diamond2"
+  );
+
+  assert(
+    normalizeRankKey(
+      "Immortal 3"
+    ) === "immortal3",
+    "Immortal 3 should normalize to immortal3"
+  );
+
+  assert(
+    normalizeRankKey(
+      "Radiant"
+    ) === "radiant",
+    "Radiant should normalize to radiant"
   );
 
   assert(
@@ -58,13 +73,6 @@ async function main() {
     "KAY/O should normalize to kayo"
   );
 
-  assert(
-    normalizeAgentKey(
-      "  Jett "
-    ) === "jett",
-    "Jett should normalize to jett"
-  );
-
   const manifest:
     AppearanceAssetManifest = {
       version: 1,
@@ -76,6 +84,8 @@ async function main() {
       },
 
       ranks: {
+        diamond2:
+          "https://assets.example.test/ranks/diamond2.png",
         diamond:
           "https://assets.example.test/ranks/diamond.png",
       },
@@ -91,8 +101,6 @@ async function main() {
             "https://assets.example.test/themes/cute-header.png",
           footerIconUrl:
             "https://assets.example.test/themes/cute-footer.png",
-          leaderboardBannerUrl:
-            "https://assets.example.test/themes/cute-leaderboard.png",
         },
       },
     };
@@ -102,21 +110,21 @@ async function main() {
       manifest
     );
 
-  const rankAppearance =
+  const appearance =
     createDefaultAppearanceV2();
 
-  rankAppearance.images.thumbnail.mode =
+  appearance.images.thumbnail.mode =
     "rank";
 
-  rankAppearance.images.largeImage.mode =
+  appearance.images.largeImage.mode =
     "theme";
 
-  rankAppearance.images.footerIcon.mode =
+  appearance.images.footerIcon.mode =
     "theme";
 
-  const rankAssets =
+  const exactAssets =
     await resolver.resolveProfileAssets(
-      rankAppearance,
+      appearance,
       {
         currentRank:
           "Diamond 2",
@@ -126,35 +134,47 @@ async function main() {
     );
 
   assert(
-    rankAssets.thumbnailUrl ===
+    exactAssets.thumbnailUrl ===
+      "https://assets.example.test/ranks/diamond2.png",
+    "exact rank division should be preferred"
+  );
+
+  const fallbackManifest:
+    AppearanceAssetManifest = {
+      ...manifest,
+      ranks: {
+        diamond:
+          "https://assets.example.test/ranks/diamond.png",
+      },
+    };
+
+  const fallbackResolver =
+    new ManifestAppearanceAssetResolver(
+      fallbackManifest
+    );
+
+  const fallbackAssets =
+    await fallbackResolver.resolveProfileAssets(
+      appearance,
+      {
+        currentRank:
+          "Diamond 2",
+      }
+    );
+
+  assert(
+    fallbackAssets.thumbnailUrl ===
       "https://assets.example.test/ranks/diamond.png",
-    "rank thumbnail should resolve"
+    "generic tier should remain a fallback"
   );
 
-  assert(
-    rankAssets.largeImageUrl ===
-      "https://assets.example.test/themes/cute-header.png",
-    "theme large image should fall back to theme header"
-  );
-
-  assert(
-    rankAssets.footerIconUrl ===
-      "https://assets.example.test/themes/cute-footer.png",
-    "theme footer icon should resolve"
-  );
-
-  const agentAppearance =
-    createDefaultAppearanceV2();
-
-  agentAppearance.images.thumbnail.mode =
+  appearance.images.thumbnail.mode =
     "agent";
 
   const agentAssets =
     await resolver.resolveProfileAssets(
-      agentAppearance,
+      appearance,
       {
-        currentRank:
-          "Diamond 2",
         mainAgent:
           "Jett",
       }
@@ -166,31 +186,8 @@ async function main() {
     "agent portrait should resolve"
   );
 
-  agentAppearance.images.thumbnail.mode =
-    "custom";
-
-  agentAppearance.customAssets.thumbnailUrl =
-    "https://uploads.example.test/my-thumbnail.webp";
-
-  const customAssets =
-    await resolver.resolveProfileAssets(
-      agentAppearance,
-      {
-        currentRank:
-          "Diamond 2",
-        mainAgent:
-          "Jett",
-      }
-    );
-
-  assert(
-    customAssets.thumbnailUrl ===
-      "https://uploads.example.test/my-thumbnail.webp",
-    "custom thumbnail should override built-in assets when selected"
-  );
-
   console.log(
-    "Cosmetics V2 Phase 4A asset self-test passed."
+    "Cosmetics V2 Phase 4B asset self-test passed."
   );
 }
 

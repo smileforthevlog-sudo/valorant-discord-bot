@@ -5,3 +5,8 @@ data/
 backup/
 
 *.log
+
+# Cosmetics V2 generated Riot assets
+.cache/
+generated-netlify-assets/
+appearance-assets.generated.json
