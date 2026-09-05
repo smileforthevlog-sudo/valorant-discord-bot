@@ -11,6 +11,8 @@ import {
 } from "discord.js";
 
 import { DatabaseSync } from "node:sqlite";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 
 // --------------------------------------------------
 // Environment variables
@@ -40,7 +42,14 @@ const DISCORD_GUILD_ID: string = guildId;
 // SQLite database
 // --------------------------------------------------
 
-const db = new DatabaseSync("data/valorant-bot.db");
+const databasePath =
+  process.env.DATABASE_PATH ?? "data/valorant-bot.db";
+
+mkdirSync(dirname(databasePath), {
+  recursive: true,
+});
+
+const db = new DatabaseSync(databasePath);
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS linked_accounts (
