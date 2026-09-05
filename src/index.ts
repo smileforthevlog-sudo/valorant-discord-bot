@@ -18,7 +18,17 @@ import { dirname } from "node:path";
 import { riotService } from "./services/riot";
 import { ensureAppearanceV2Column } from "./appearance/migrate";
 import { createAppearanceV2Store } from "./appearance/store";
+import { appearanceV2FromLegacy } from "./appearance/defaults";
+import {
+  buildProfileEmbedV2,
+} from "./appearance/renderer";
+import {
+  ManifestAppearanceAssetResolver,
+} from "./appearance/assets";
 import type { LegacyAppearanceSettings } from "./appearance/types";
+import {
+  appearanceAssetManifestService,
+} from "./services/appearanceAssetManifest";
 import {
   dashboardSettingsService,
   type DashboardGuildSettings,
@@ -1190,6 +1200,10 @@ client.once(
     );
 
     console.log(
+      `Cosmetics asset manifest: ${appearanceAssetManifestService.getStatus()}`
+    );
+
+    console.log(
       `Riot service status: ${riotService.getStatus()}`
     );
   }
@@ -1410,117 +1424,97 @@ client.on(
             return;
           }
 
-          const totalGames =
-            player.wins +
-            player.losses;
-
-          const winRate =
-            totalGames > 0
-              ? (
-                  (player.wins /
-                    totalGames) *
-                  100
-                ).toFixed(
-                  1
+          // Cosmetics V2 canary path:
+          // only the existing mock-player branch uses the V2 renderer.
+          // Linked-user /profile and production stats remain on V1 for now.
+          const appearance =
+            interaction.guildId
+              ? appearanceV2Store.getOrCreate(
+                  interaction.guildId,
+                  toLegacyAppearanceSettings(
+                    settings
+                  )
                 )
-              : "0.0";
+              : appearanceV2FromLegacy(
+                  toLegacyAppearanceSettings(
+                    settings
+                  )
+                );
+
+          const manifest =
+            await appearanceAssetManifestService.getManifest();
+
+          const assetResolver =
+            new ManifestAppearanceAssetResolver(
+              manifest
+            );
+
+          const assets =
+            await assetResolver.resolveProfileAssets(
+              appearance,
+              {
+                currentRank:
+                  player.currentRank,
+
+                mainAgent:
+                  player.mainAgents[0] ??
+                  null,
+
+                serverIconUrl:
+                  interaction.guild?.iconURL() ??
+                  null,
+              }
+            );
+
+          const playerLabel =
+            selectedPlayer
+              .charAt(0)
+              .toUpperCase() +
+            selectedPlayer.slice(1);
 
           const profileEmbed =
-            new EmbedBuilder()
-              .setColor(
-                settings.embed_color
-              )
-              .setTitle(
-                withIcon(
-                  getIcon(
-                    settings,
-                    "profile"
-                  ),
-                  `${player.riotName}#${player.tag}`
-                )
-              )
-              .setDescription(
-                getProfileDescription(
-                  settings,
-                  selectedPlayer
-                )
-              )
-              .addFields(
-                {
-                  name:
-                    "Current Rank",
-                  value:
-                    player.currentRank,
-                  inline:
-                    true,
-                },
-                {
-                  name:
-                    "Peak Rank",
-                  value:
-                    player.peakRank,
-                  inline:
-                    true,
-                },
-                {
-                  name:
-                    "Win Rate",
-                  value:
-                    `${winRate}%`,
-                  inline:
-                    true,
-                },
-                {
-                  name:
-                    "K/D",
-                  value:
-                    player.kd.toFixed(
-                      2
-                    ),
-                  inline:
-                    true,
-                },
-                {
-                  name:
-                    "ACS",
-                  value:
-                    player.acs.toString(),
-                  inline:
-                    true,
-                },
-                {
-                  name:
-                    "Headshot %",
-                  value:
-                    `${player.headshotPercentage}%`,
-                  inline:
-                    true,
-                },
-                {
-                  name:
-                    "Record",
-                  value:
-                    `${player.wins}W - ${player.losses}L`,
-                  inline:
-                    true,
-                },
-                {
-                  name:
-                    "Main Agents",
-                  value:
-                    player.mainAgents.join(
-                      getAgentSeparator(
-                        settings
-                      )
-                    ),
-                  inline:
-                    true,
-                }
-              )
-              .setFooter({
-                text:
-                  `${settings.footer_text} • Mock Data`,
-              });
+            buildProfileEmbedV2(
+              {
+                riotName:
+                  player.riotName,
+
+                riotTag:
+                  player.tag,
+
+                discordUsername:
+                  playerLabel,
+
+                currentRank:
+                  player.currentRank,
+
+                peakRank:
+                  player.peakRank,
+
+                wins:
+                  player.wins,
+
+                losses:
+                  player.losses,
+
+                kd:
+                  player.kd,
+
+                acs:
+                  player.acs,
+
+                headshotPercentage:
+                  player.headshotPercentage,
+
+                mainAgents:
+                  player.mainAgents,
+
+                mockData:
+                  true,
+              },
+
+              appearance,
+              assets
+            );
 
           await interaction.reply({
             embeds: [

@@ -437,6 +437,12 @@ export function buildProfileEmbedV2(
     );
   }
 
+  applyCommonVisuals(
+    embed,
+    appearance,
+    assets
+  );
+
   if (
     data.mockData
   ) {
@@ -465,11 +471,7 @@ export function buildProfileEmbedV2(
     );
   }
 
-  return applyCommonVisuals(
-    embed,
-    appearance,
-    assets
-  );
+  return embed;
 }
 
 function comparisonSummary(
