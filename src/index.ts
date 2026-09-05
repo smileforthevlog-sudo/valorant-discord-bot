@@ -17,6 +17,8 @@ import { dirname } from "node:path";
 
 import { riotService } from "./services/riot";
 import { ensureAppearanceV2Column } from "./appearance/migrate";
+import { createAppearanceV2Store } from "./appearance/store";
+import type { LegacyAppearanceSettings } from "./appearance/types";
 import {
   dashboardSettingsService,
   type DashboardGuildSettings,
@@ -173,6 +175,9 @@ db.exec(`
 // Cosmetics V2 is introduced alongside the existing settings.
 // The bot still renders with the V1 fields for now.
 ensureAppearanceV2Column(db);
+
+const appearanceV2Store =
+  createAppearanceV2Store(db);
 
 // --------------------------------------------------
 // Types
@@ -428,9 +433,49 @@ function getGuildSettings(
     targetGuildId
   );
 
-  return getGuildSettingsStatement.get(
-    targetGuildId
-  ) as GuildSettings;
+  const settings =
+    getGuildSettingsStatement.get(
+      targetGuildId
+    ) as GuildSettings;
+
+  // Lazy V1 -> V2 migration:
+  // the first time a guild's settings are read,
+  // create appearance_json if it is missing or invalid.
+  // V1 remains the live renderer source for now.
+  appearanceV2Store.getOrCreate(
+    targetGuildId,
+    toLegacyAppearanceSettings(
+      settings
+    )
+  );
+
+  return settings;
+}
+
+function toLegacyAppearanceSettings(
+  settings: GuildSettings
+): LegacyAppearanceSettings {
+  return {
+    style:
+      settings.style,
+    embedColor:
+      settings.embed_color,
+    footerText:
+      settings.footer_text,
+    emojiStyle:
+      settings.emoji_style,
+  };
+}
+
+function syncLegacyAppearanceV2(
+  settings: GuildSettings
+): void {
+  appearanceV2Store.syncLegacyFields(
+    settings.guild_id,
+    toLegacyAppearanceSettings(
+      settings
+    )
+  );
 }
 
 function getDefaultGuildSettings():
@@ -458,6 +503,15 @@ function saveDashboardSettingsLocally(
     settings.embedColor,
     settings.footerText,
     settings.emojiStyle
+  );
+
+  const updatedSettings =
+    getGuildSettings(
+      targetGuildId
+    );
+
+  syncLegacyAppearanceV2(
+    updatedSettings
   );
 }
 
@@ -524,6 +578,14 @@ async function getSyncedGuildSettings(
 async function pushGuildSettings(
   settings: GuildSettings
 ) {
+  // Until the dashboard itself speaks Cosmetics V2,
+  // mirror V1-compatible changes into appearance_json.
+  // V2-only fields such as stat visibility and custom
+  // asset URLs are preserved by syncLegacyFields().
+  syncLegacyAppearanceV2(
+    settings
+  );
+
   await dashboardSettingsService.saveGuildSettings(
     settings.guild_id,
     toDashboardSettings(
