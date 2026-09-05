@@ -39,8 +39,20 @@ export type RiotServiceStatus =
 
 export class RiotService {
   getStatus(): RiotServiceStatus {
-    return "not_configured";
+  const clientId = process.env.RIOT_CLIENT_ID;
+  const clientSecret = process.env.RIOT_CLIENT_SECRET;
+  const redirectUri = process.env.RIOT_REDIRECT_URI;
+
+  if (
+    clientId &&
+    clientSecret &&
+    redirectUri
+  ) {
+    return "ready";
   }
+
+  return "not_configured";
+}
 
   async getAccountByPuuid(
     puuid: string
