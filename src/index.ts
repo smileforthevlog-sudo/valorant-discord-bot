@@ -16,30 +16,46 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { riotService } from "./services/riot";
+import {
+  dashboardSettingsService,
+  type DashboardGuildSettings,
+} from "./services/dashboardSettings";
 
 // --------------------------------------------------
 // Environment variables
 // --------------------------------------------------
 
-const token = process.env.DISCORD_TOKEN;
-const clientId = process.env.DISCORD_CLIENT_ID;
-const guildId = process.env.DISCORD_GUILD_ID;
+const token =
+  process.env.DISCORD_TOKEN;
+const clientId =
+  process.env.DISCORD_CLIENT_ID;
+const guildId =
+  process.env.DISCORD_GUILD_ID;
 
 if (!token) {
-  throw new Error("DISCORD_TOKEN is missing from .env");
+  throw new Error(
+    "DISCORD_TOKEN is missing from .env"
+  );
 }
 
 if (!clientId) {
-  throw new Error("DISCORD_CLIENT_ID is missing from .env");
+  throw new Error(
+    "DISCORD_CLIENT_ID is missing from .env"
+  );
 }
 
 if (!guildId) {
-  throw new Error("DISCORD_GUILD_ID is missing from .env");
+  throw new Error(
+    "DISCORD_GUILD_ID is missing from .env"
+  );
 }
 
-const DISCORD_TOKEN: string = token;
-const DISCORD_CLIENT_ID: string = clientId;
-const DISCORD_GUILD_ID: string = guildId;
+const DISCORD_TOKEN: string =
+  token;
+const DISCORD_CLIENT_ID: string =
+  clientId;
+const DISCORD_GUILD_ID: string =
+  guildId;
 
 // --------------------------------------------------
 // SQLite database
@@ -49,11 +65,17 @@ const databasePath =
   process.env.DATABASE_PATH ??
   "data/valorant-bot.db";
 
-mkdirSync(dirname(databasePath), {
-  recursive: true,
-});
+mkdirSync(
+  dirname(databasePath),
+  {
+    recursive: true,
+  }
+);
 
-const db = new DatabaseSync(databasePath);
+const db =
+  new DatabaseSync(
+    databasePath
+  );
 
 // --------------------------------------------------
 // Linked accounts table
@@ -72,13 +94,20 @@ db.exec(`
 // Linked account migrations
 // --------------------------------------------------
 
-const linkedAccountColumns = db
-  .prepare("PRAGMA table_info(linked_accounts)")
-  .all() as Array<{ name: string }>;
+const linkedAccountColumns =
+  db
+    .prepare(
+      "PRAGMA table_info(linked_accounts)"
+    )
+    .all() as Array<{
+      name: string;
+    }>;
 
 if (
   !linkedAccountColumns.some(
-    (column) => column.name === "riot_puuid"
+    (column) =>
+      column.name ===
+      "riot_puuid"
   )
 ) {
   db.exec(`
@@ -93,7 +122,9 @@ if (
 
 if (
   !linkedAccountColumns.some(
-    (column) => column.name === "link_method"
+    (column) =>
+      column.name ===
+      "link_method"
   )
 ) {
   db.exec(`
@@ -108,7 +139,9 @@ if (
 
 if (
   !linkedAccountColumns.some(
-    (column) => column.name === "verified_at"
+    (column) =>
+      column.name ===
+      "verified_at"
   )
 ) {
   db.exec(`
@@ -174,17 +207,23 @@ type MockPlayer = {
 // Mock Valorant data
 // --------------------------------------------------
 
-const players: Record<string, MockPlayer> = {
+const players: Record<
+  string,
+  MockPlayer
+> = {
   jason: {
     riotName: "Tapgod",
     tag: "NA1",
-    currentRank: "Diamond 2",
-    peakRank: "Ascendant 1",
+    currentRank:
+      "Diamond 2",
+    peakRank:
+      "Ascendant 1",
     wins: 37,
     losses: 29,
     kd: 1.14,
     acs: 238,
-    headshotPercentage: 27.4,
+    headshotPercentage:
+      27.4,
     mainAgents: [
       "Jett",
       "Omen",
@@ -195,13 +234,16 @@ const players: Record<string, MockPlayer> = {
   alex: {
     riotName: "Alex",
     tag: "NA1",
-    currentRank: "Platinum 3",
-    peakRank: "Diamond 1",
+    currentRank:
+      "Platinum 3",
+    peakRank:
+      "Diamond 1",
     wins: 31,
     losses: 29,
     kd: 1.02,
     acs: 219,
-    headshotPercentage: 21.9,
+    headshotPercentage:
+      21.9,
     mainAgents: [
       "Sova",
       "Cypher",
@@ -214,26 +256,27 @@ const players: Record<string, MockPlayer> = {
 // Linked-account database helpers
 // --------------------------------------------------
 
-const saveLinkedAccountStatement = db.prepare(`
-  INSERT INTO linked_accounts (
-    discord_user_id,
-    riot_name,
-    riot_tag,
-    riot_puuid,
-    link_method,
-    verified_at
-  )
-  VALUES (?, ?, ?, NULL, 'manual', NULL)
+const saveLinkedAccountStatement =
+  db.prepare(`
+    INSERT INTO linked_accounts (
+      discord_user_id,
+      riot_name,
+      riot_tag,
+      riot_puuid,
+      link_method,
+      verified_at
+    )
+    VALUES (?, ?, ?, NULL, 'manual', NULL)
 
-  ON CONFLICT(discord_user_id)
-  DO UPDATE SET
-    riot_name = excluded.riot_name,
-    riot_tag = excluded.riot_tag,
-    riot_puuid = NULL,
-    link_method = 'manual',
-    verified_at = NULL,
-    linked_at = CURRENT_TIMESTAMP
-`);
+    ON CONFLICT(discord_user_id)
+    DO UPDATE SET
+      riot_name = excluded.riot_name,
+      riot_tag = excluded.riot_tag,
+      riot_puuid = NULL,
+      link_method = 'manual',
+      verified_at = NULL,
+      linked_at = CURRENT_TIMESTAMP
+  `);
 
 const saveVerifiedLinkedAccountStatement =
   db.prepare(`
@@ -257,111 +300,231 @@ const saveVerifiedLinkedAccountStatement =
       linked_at = CURRENT_TIMESTAMP
   `);
 
-const deleteLinkedAccountStatement = db.prepare(`
-  DELETE FROM linked_accounts
-  WHERE discord_user_id = ?
-`);
+const deleteLinkedAccountStatement =
+  db.prepare(`
+    DELETE FROM linked_accounts
+    WHERE discord_user_id = ?
+  `);
 
-const getLinkedAccountStatement = db.prepare(`
-  SELECT
-    riot_name,
-    riot_tag,
-    riot_puuid,
-    link_method,
-    verified_at
-  FROM linked_accounts
-  WHERE discord_user_id = ?
-`);
+const getLinkedAccountStatement =
+  db.prepare(`
+    SELECT
+      riot_name,
+      riot_tag,
+      riot_puuid,
+      link_method,
+      verified_at
+    FROM linked_accounts
+    WHERE discord_user_id = ?
+  `);
 
 function getLinkedAccount(
   discordUserId: string
 ): LinkedAccount | undefined {
   return getLinkedAccountStatement.get(
     discordUserId
-  ) as LinkedAccount | undefined;
+  ) as
+    | LinkedAccount
+    | undefined;
 }
 
 // --------------------------------------------------
 // Guild-settings database helpers
 // --------------------------------------------------
 
-const getGuildSettingsStatement = db.prepare(`
-  SELECT
-    guild_id,
-    style,
-    embed_color,
-    footer_text,
-    emoji_style,
-    updated_at
-  FROM guild_settings
-  WHERE guild_id = ?
-`);
+const getGuildSettingsStatement =
+  db.prepare(`
+    SELECT
+      guild_id,
+      style,
+      embed_color,
+      footer_text,
+      emoji_style,
+      updated_at
+    FROM guild_settings
+    WHERE guild_id = ?
+  `);
 
-const createGuildSettingsStatement = db.prepare(`
-  INSERT OR IGNORE INTO guild_settings (
-    guild_id
-  )
-  VALUES (?)
-`);
+const createGuildSettingsStatement =
+  db.prepare(`
+    INSERT OR IGNORE INTO guild_settings (
+      guild_id
+    )
+    VALUES (?)
+  `);
 
-const updateGuildStyleStatement = db.prepare(`
-  UPDATE guild_settings
-  SET
-    style = ?,
-    updated_at = CURRENT_TIMESTAMP
-  WHERE guild_id = ?
-`);
+const updateGuildStyleStatement =
+  db.prepare(`
+    UPDATE guild_settings
+    SET
+      style = ?,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE guild_id = ?
+  `);
 
-const updateGuildColorStatement = db.prepare(`
-  UPDATE guild_settings
-  SET
-    embed_color = ?,
-    updated_at = CURRENT_TIMESTAMP
-  WHERE guild_id = ?
-`);
+const updateGuildColorStatement =
+  db.prepare(`
+    UPDATE guild_settings
+    SET
+      embed_color = ?,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE guild_id = ?
+  `);
 
-const updateGuildFooterStatement = db.prepare(`
-  UPDATE guild_settings
-  SET
-    footer_text = ?,
-    updated_at = CURRENT_TIMESTAMP
-  WHERE guild_id = ?
-`);
+const updateGuildFooterStatement =
+  db.prepare(`
+    UPDATE guild_settings
+    SET
+      footer_text = ?,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE guild_id = ?
+  `);
 
-const updateGuildEmojiStatement = db.prepare(`
-  UPDATE guild_settings
-  SET
-    emoji_style = ?,
-    updated_at = CURRENT_TIMESTAMP
-  WHERE guild_id = ?
-`);
+const updateGuildEmojiStatement =
+  db.prepare(`
+    UPDATE guild_settings
+    SET
+      emoji_style = ?,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE guild_id = ?
+  `);
 
-const resetGuildSettingsStatement = db.prepare(`
-  DELETE FROM guild_settings
-  WHERE guild_id = ?
-`);
+const resetGuildSettingsStatement =
+  db.prepare(`
+    DELETE FROM guild_settings
+    WHERE guild_id = ?
+  `);
+
+const saveSyncedGuildSettingsStatement =
+  db.prepare(`
+    INSERT INTO guild_settings (
+      guild_id,
+      style,
+      embed_color,
+      footer_text,
+      emoji_style,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+
+    ON CONFLICT(guild_id)
+    DO UPDATE SET
+      style = excluded.style,
+      embed_color = excluded.embed_color,
+      footer_text = excluded.footer_text,
+      emoji_style = excluded.emoji_style,
+      updated_at = CURRENT_TIMESTAMP
+  `);
 
 function getGuildSettings(
-  guildId: string
+  targetGuildId: string
 ): GuildSettings {
   createGuildSettingsStatement.run(
-    guildId
+    targetGuildId
   );
 
   return getGuildSettingsStatement.get(
-    guildId
+    targetGuildId
   ) as GuildSettings;
 }
 
-function getDefaultGuildSettings(): GuildSettings {
+function getDefaultGuildSettings():
+  GuildSettings {
   return {
     guild_id: "default",
     style: "cute",
     embed_color: 0xffb6c1,
-    footer_text: "Valorant Tracker Bot ♡",
+    footer_text:
+      "Valorant Tracker Bot ♡",
     emoji_style: "cute",
-    updated_at: new Date().toISOString(),
+    updated_at:
+      new Date().toISOString(),
   };
+}
+
+function saveDashboardSettingsLocally(
+  targetGuildId: string,
+  settings:
+    DashboardGuildSettings
+) {
+  saveSyncedGuildSettingsStatement.run(
+    targetGuildId,
+    settings.style,
+    settings.embedColor,
+    settings.footerText,
+    settings.emojiStyle
+  );
+}
+
+function toDashboardSettings(
+  settings: GuildSettings
+): DashboardGuildSettings {
+  return {
+    style:
+      getStyle(settings),
+    embedColor:
+      settings.embed_color,
+    footerText:
+      settings.footer_text,
+    emojiStyle:
+      getEmojiStyle(settings),
+  };
+}
+
+async function getSyncedGuildSettings(
+  targetGuildId: string
+): Promise<GuildSettings> {
+  const localSettings =
+    getGuildSettings(
+      targetGuildId
+    );
+
+  const remoteSettings =
+    await dashboardSettingsService.getGuildSettings(
+      targetGuildId
+    );
+
+  if (!remoteSettings) {
+    return localSettings;
+  }
+
+  // If the dashboard has never saved settings
+  // for this server, seed it from the bot's
+  // existing SQLite settings instead of
+  // overwriting the bot with remote defaults.
+  if (
+    remoteSettings.source ===
+    "default"
+  ) {
+    await dashboardSettingsService.saveGuildSettings(
+      targetGuildId,
+      toDashboardSettings(
+        localSettings
+      )
+    );
+
+    return localSettings;
+  }
+
+  saveDashboardSettingsLocally(
+    targetGuildId,
+    remoteSettings
+  );
+
+  return getGuildSettings(
+    targetGuildId
+  );
+}
+
+async function pushGuildSettings(
+  settings: GuildSettings
+) {
+  await dashboardSettingsService.saveGuildSettings(
+    settings.guild_id,
+    toDashboardSettings(
+      settings
+    )
+  );
 }
 
 // --------------------------------------------------
@@ -372,8 +535,10 @@ function getStyle(
   settings: GuildSettings
 ): "cute" | "classic" | "minimal" {
   if (
-    settings.style === "classic" ||
-    settings.style === "minimal"
+    settings.style ===
+      "classic" ||
+    settings.style ===
+      "minimal"
   ) {
     return settings.style;
   }
@@ -383,10 +548,15 @@ function getStyle(
 
 function getEmojiStyle(
   settings: GuildSettings
-): "cute" | "normal" | "none" {
+):
+  | "cute"
+  | "normal"
+  | "none" {
   if (
-    settings.emoji_style === "normal" ||
-    settings.emoji_style === "none"
+    settings.emoji_style ===
+      "normal" ||
+    settings.emoji_style ===
+      "none"
   ) {
     return settings.emoji_style;
   }
@@ -405,13 +575,19 @@ function getIcon(
     | "settings"
 ): string {
   const emojiStyle =
-    getEmojiStyle(settings);
+    getEmojiStyle(
+      settings
+    );
 
-  if (emojiStyle === "none") {
+  if (
+    emojiStyle === "none"
+  ) {
     return "";
   }
 
-  if (emojiStyle === "normal") {
+  if (
+    emojiStyle === "normal"
+  ) {
     const normalIcons = {
       profile: "🎯",
       compare: "⚔️",
@@ -421,7 +597,9 @@ function getIcon(
       settings: "⚙️",
     };
 
-    return normalIcons[type];
+    return normalIcons[
+      type
+    ];
   }
 
   const cuteIcons = {
@@ -433,7 +611,9 @@ function getIcon(
     settings: "୨୧",
   };
 
-  return cuteIcons[type];
+  return cuteIcons[
+    type
+  ];
 }
 
 function withIcon(
@@ -451,11 +631,15 @@ function getAgentSeparator(
   const style =
     getStyle(settings);
 
-  if (style === "cute") {
+  if (
+    style === "cute"
+  ) {
     return " ♡ ";
   }
 
-  if (style === "minimal") {
+  if (
+    style === "minimal"
+  ) {
     return ", ";
   }
 
@@ -469,11 +653,15 @@ function getProfileDescription(
   const style =
     getStyle(settings);
 
-  if (style === "cute") {
+  if (
+    style === "cute"
+  ) {
     return `୨୧ Valorant profile for **${username}** ୨୧`;
   }
 
-  if (style === "minimal") {
+  if (
+    style === "minimal"
+  ) {
     return `Profile for **${username}**`;
   }
 
@@ -486,7 +674,9 @@ function getCompareTitle(
   const style =
     getStyle(settings);
 
-  if (style === "cute") {
+  if (
+    style === "cute"
+  ) {
     return withIcon(
       getIcon(
         settings,
@@ -496,7 +686,9 @@ function getCompareTitle(
     );
   }
 
-  if (style === "minimal") {
+  if (
+    style === "minimal"
+  ) {
     return "Player Comparison";
   }
 
@@ -565,13 +757,15 @@ function buildSettingsEmbed(
         inline: true,
       },
       {
-        name: "Embed Color",
+        name:
+          "Embed Color",
         value:
           hexColor,
         inline: true,
       },
       {
-        name: "Emoji Style",
+        name:
+          "Emoji Style",
         value:
           settings.emoji_style,
         inline: true,
@@ -605,13 +799,18 @@ const commands = [
     .setDescription(
       "Link your Discord account to a Riot ID"
     )
-    .addStringOption((option) =>
-      option
-        .setName("riot_id")
-        .setDescription(
-          "Your Riot ID, for example Tapgod#NA1"
-        )
-        .setRequired(true)
+    .addStringOption(
+      (option) =>
+        option
+          .setName(
+            "riot_id"
+          )
+          .setDescription(
+            "Your Riot ID, for example Tapgod#NA1"
+          )
+          .setRequired(
+            true
+          )
     ),
 
   new SlashCommandBuilder()
@@ -625,31 +824,45 @@ const commands = [
     .setDescription(
       "View a Valorant player profile"
     )
-    .addStringOption((option) =>
-      option
-        .setName("player")
-        .setDescription(
-          "Choose a mock player"
-        )
-        .setRequired(false)
-        .addChoices(
-          {
-            name: "Jason",
-            value: "jason",
-          },
-          {
-            name: "Alex",
-            value: "alex",
-          }
-        )
+    .addStringOption(
+      (option) =>
+        option
+          .setName(
+            "player"
+          )
+          .setDescription(
+            "Choose a mock player"
+          )
+          .setRequired(
+            false
+          )
+          .addChoices(
+            {
+              name:
+                "Jason",
+              value:
+                "jason",
+            },
+            {
+              name:
+                "Alex",
+              value:
+                "alex",
+            }
+          )
     )
-    .addUserOption((option) =>
-      option
-        .setName("user")
-        .setDescription(
-          "View a linked Discord user's Valorant profile"
-        )
-        .setRequired(false)
+    .addUserOption(
+      (option) =>
+        option
+          .setName(
+            "user"
+          )
+          .setDescription(
+            "View a linked Discord user's Valorant profile"
+          )
+          .setRequired(
+            false
+          )
     ),
 
   new SlashCommandBuilder()
@@ -657,109 +870,163 @@ const commands = [
     .setDescription(
       "View or change this server's bot settings"
     )
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName("view")
-        .setDescription(
-          "View this server's current bot settings"
-        )
+    .addSubcommand(
+      (subcommand) =>
+        subcommand
+          .setName(
+            "view"
+          )
+          .setDescription(
+            "View this server's current bot settings"
+          )
     )
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName("style")
-        .setDescription(
-          "Change this server's bot style"
-        )
-        .addStringOption((option) =>
-          option
-            .setName("style")
-            .setDescription(
-              "Choose an aesthetic"
-            )
-            .setRequired(true)
-            .addChoices(
-              {
-                name: "Cute",
-                value: "cute",
-              },
-              {
-                name: "Classic",
-                value: "classic",
-              },
-              {
-                name: "Minimal",
-                value: "minimal",
-              }
-            )
-        )
+    .addSubcommand(
+      (subcommand) =>
+        subcommand
+          .setName(
+            "style"
+          )
+          .setDescription(
+            "Change this server's bot style"
+          )
+          .addStringOption(
+            (option) =>
+              option
+                .setName(
+                  "style"
+                )
+                .setDescription(
+                  "Choose an aesthetic"
+                )
+                .setRequired(
+                  true
+                )
+                .addChoices(
+                  {
+                    name:
+                      "Cute",
+                    value:
+                      "cute",
+                  },
+                  {
+                    name:
+                      "Classic",
+                    value:
+                      "classic",
+                  },
+                  {
+                    name:
+                      "Minimal",
+                    value:
+                      "minimal",
+                  }
+                )
+          )
     )
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName("color")
-        .setDescription(
-          "Change the embed accent color"
-        )
-        .addStringOption((option) =>
-          option
-            .setName("hex")
-            .setDescription(
-              "Hex color, for example #FFB6C1"
-            )
-            .setRequired(true)
-        )
+    .addSubcommand(
+      (subcommand) =>
+        subcommand
+          .setName(
+            "color"
+          )
+          .setDescription(
+            "Change the embed accent color"
+          )
+          .addStringOption(
+            (option) =>
+              option
+                .setName(
+                  "hex"
+                )
+                .setDescription(
+                  "Hex color, for example #FFB6C1"
+                )
+                .setRequired(
+                  true
+                )
+          )
     )
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName("footer")
-        .setDescription(
-          "Change the embed footer text"
-        )
-        .addStringOption((option) =>
-          option
-            .setName("text")
-            .setDescription(
-              "Custom footer text"
-            )
-            .setRequired(true)
-            .setMinLength(1)
-            .setMaxLength(120)
-        )
+    .addSubcommand(
+      (subcommand) =>
+        subcommand
+          .setName(
+            "footer"
+          )
+          .setDescription(
+            "Change the embed footer text"
+          )
+          .addStringOption(
+            (option) =>
+              option
+                .setName(
+                  "text"
+                )
+                .setDescription(
+                  "Custom footer text"
+                )
+                .setRequired(
+                  true
+                )
+                .setMinLength(
+                  1
+                )
+                .setMaxLength(
+                  120
+                )
+          )
     )
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName("emoji")
-        .setDescription(
-          "Change the emoji style"
-        )
-        .addStringOption((option) =>
-          option
-            .setName("style")
-            .setDescription(
-              "Choose an emoji style"
-            )
-            .setRequired(true)
-            .addChoices(
-              {
-                name: "Cute",
-                value: "cute",
-              },
-              {
-                name: "Normal",
-                value: "normal",
-              },
-              {
-                name: "None",
-                value: "none",
-              }
-            )
-        )
+    .addSubcommand(
+      (subcommand) =>
+        subcommand
+          .setName(
+            "emoji"
+          )
+          .setDescription(
+            "Change the emoji style"
+          )
+          .addStringOption(
+            (option) =>
+              option
+                .setName(
+                  "style"
+                )
+                .setDescription(
+                  "Choose an emoji style"
+                )
+                .setRequired(
+                  true
+                )
+                .addChoices(
+                  {
+                    name:
+                      "Cute",
+                    value:
+                      "cute",
+                  },
+                  {
+                    name:
+                      "Normal",
+                    value:
+                      "normal",
+                  },
+                  {
+                    name:
+                      "None",
+                    value:
+                      "none",
+                  }
+                )
+          )
     )
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName("reset")
-        .setDescription(
-          "Reset this server to the default cute theme"
-        )
+    .addSubcommand(
+      (subcommand) =>
+        subcommand
+          .setName(
+            "reset"
+          )
+          .setDescription(
+            "Reset this server to the default cute theme"
+          )
     ),
 
   new SlashCommandBuilder()
@@ -767,21 +1034,31 @@ const commands = [
     .setDescription(
       "Compare two linked Valorant players"
     )
-    .addUserOption((option) =>
-      option
-        .setName("user1")
-        .setDescription(
-          "First Discord user"
-        )
-        .setRequired(true)
+    .addUserOption(
+      (option) =>
+        option
+          .setName(
+            "user1"
+          )
+          .setDescription(
+            "First Discord user"
+          )
+          .setRequired(
+            true
+          )
     )
-    .addUserOption((option) =>
-      option
-        .setName("user2")
-        .setDescription(
-          "Second Discord user"
-        )
-        .setRequired(true)
+    .addUserOption(
+      (option) =>
+        option
+          .setName(
+            "user2"
+          )
+          .setDescription(
+            "Second Discord user"
+          )
+          .setRequired(
+            true
+          )
     ),
 ].map(
   (command) =>
@@ -792,11 +1069,12 @@ const commands = [
 // Discord REST
 // --------------------------------------------------
 
-const rest = new REST({
-  version: "10",
-}).setToken(
-  DISCORD_TOKEN
-);
+const rest =
+  new REST({
+    version: "10",
+  }).setToken(
+    DISCORD_TOKEN
+  );
 
 async function registerCommands() {
   console.log(
@@ -809,7 +1087,8 @@ async function registerCommands() {
       DISCORD_GUILD_ID
     ),
     {
-      body: commands,
+      body:
+        commands,
     }
   );
 
@@ -822,11 +1101,12 @@ async function registerCommands() {
 // Discord client
 // --------------------------------------------------
 
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-  ],
-});
+const client =
+  new Client({
+    intents: [
+      GatewayIntentBits.Guilds,
+    ],
+  });
 
 client.once(
   "clientReady",
@@ -836,6 +1116,14 @@ client.once(
         client.user?.tag ??
         "Unknown Bot"
       }`
+    );
+
+    console.log(
+      `Dashboard settings sync: ${dashboardSettingsService.getStatus()}`
+    );
+
+    console.log(
+      `Riot service status: ${riotService.getStatus()}`
     );
   }
 );
@@ -856,7 +1144,7 @@ client.on(
     try {
       const settings =
         interaction.guildId
-          ? getGuildSettings(
+          ? await getSyncedGuildSettings(
               interaction.guildId
             )
           : getDefaultGuildSettings();
@@ -897,12 +1185,15 @@ client.on(
           );
 
         const hashIndex =
-          riotId.lastIndexOf("#");
+          riotId.lastIndexOf(
+            "#"
+          );
 
         if (
           hashIndex <= 0 ||
           hashIndex ===
-            riotId.length - 1
+            riotId.length -
+              1
         ) {
           await interaction.reply({
             content:
@@ -914,18 +1205,21 @@ client.on(
           return;
         }
 
-        const riotName = riotId
-          .slice(
-            0,
-            hashIndex
-          )
-          .trim();
+        const riotName =
+          riotId
+            .slice(
+              0,
+              hashIndex
+            )
+            .trim();
 
-        const riotTag = riotId
-          .slice(
-            hashIndex + 1
-          )
-          .trim();
+        const riotTag =
+          riotId
+            .slice(
+              hashIndex +
+                1
+            )
+            .trim();
 
         if (
           !riotName ||
@@ -1031,10 +1325,6 @@ client.on(
             "user"
           );
 
-        // --------------------------------------------
-        // Mock profile
-        // --------------------------------------------
-
         if (
           selectedPlayer
         ) {
@@ -1043,7 +1333,9 @@ client.on(
               selectedPlayer
             ];
 
-          if (!player) {
+          if (
+            !player
+          ) {
             await interaction.reply(
               "That mock player could not be found."
             );
@@ -1061,7 +1353,9 @@ client.on(
                   (player.wins /
                     totalGames) *
                   100
-                ).toFixed(1)
+                ).toFixed(
+                  1
+                )
               : "0.0";
 
           const profileEmbed =
@@ -1090,49 +1384,58 @@ client.on(
                     "Current Rank",
                   value:
                     player.currentRank,
-                  inline: true,
+                  inline:
+                    true,
                 },
                 {
                   name:
                     "Peak Rank",
                   value:
                     player.peakRank,
-                  inline: true,
+                  inline:
+                    true,
                 },
                 {
                   name:
                     "Win Rate",
                   value:
                     `${winRate}%`,
-                  inline: true,
+                  inline:
+                    true,
                 },
                 {
-                  name: "K/D",
+                  name:
+                    "K/D",
                   value:
                     player.kd.toFixed(
                       2
                     ),
-                  inline: true,
+                  inline:
+                    true,
                 },
                 {
-                  name: "ACS",
+                  name:
+                    "ACS",
                   value:
                     player.acs.toString(),
-                  inline: true,
+                  inline:
+                    true,
                 },
                 {
                   name:
                     "Headshot %",
                   value:
                     `${player.headshotPercentage}%`,
-                  inline: true,
+                  inline:
+                    true,
                 },
                 {
                   name:
                     "Record",
                   value:
                     `${player.wins}W - ${player.losses}L`,
-                  inline: true,
+                  inline:
+                    true,
                 },
                 {
                   name:
@@ -1143,7 +1446,8 @@ client.on(
                         settings
                       )
                     ),
-                  inline: true,
+                  inline:
+                    true,
                 }
               )
               .setFooter({
@@ -1159,10 +1463,6 @@ client.on(
 
           return;
         }
-
-        // --------------------------------------------
-        // Linked profile
-        // --------------------------------------------
 
         const targetUser =
           selectedUser ??
@@ -1195,10 +1495,6 @@ client.on(
           return;
         }
 
-        // --------------------------------------------
-        // Future Riot-verified profile
-        // --------------------------------------------
-
         if (
           linkedAccount.link_method ===
             "rso" &&
@@ -1217,12 +1513,15 @@ client.on(
               riotStats.losses;
 
             const winRate =
-              totalGames > 0
+              totalGames >
+              0
                 ? (
                     (riotStats.wins /
                       totalGames) *
                     100
-                  ).toFixed(1)
+                  ).toFixed(
+                    1
+                  )
                 : "0.0";
 
             const statsEmbed =
@@ -1252,7 +1551,8 @@ client.on(
                     value:
                       riotStats.currentRank ??
                       "Unavailable",
-                    inline: true,
+                    inline:
+                      true,
                   },
                   {
                     name:
@@ -1260,14 +1560,16 @@ client.on(
                     value:
                       riotStats.peakRank ??
                       "Unavailable",
-                    inline: true,
+                    inline:
+                      true,
                   },
                   {
                     name:
                       "Win Rate",
                     value:
                       `${winRate}%`,
-                    inline: true,
+                    inline:
+                      true,
                   },
                   {
                     name:
@@ -1277,7 +1579,8 @@ client.on(
                         2
                       ) ??
                       "Unavailable",
-                    inline: true,
+                    inline:
+                      true,
                   },
                   {
                     name:
@@ -1285,7 +1588,8 @@ client.on(
                     value:
                       riotStats.acs?.toString() ??
                       "Unavailable",
-                    inline: true,
+                    inline:
+                      true,
                   },
                   {
                     name:
@@ -1295,14 +1599,16 @@ client.on(
                       null
                         ? `${riotStats.headshotPercentage}%`
                         : "Unavailable",
-                    inline: true,
+                    inline:
+                      true,
                   },
                   {
                     name:
                       "Record",
                     value:
                       `${riotStats.wins}W - ${riotStats.losses}L`,
-                    inline: true,
+                    inline:
+                      true,
                   },
                   {
                     name:
@@ -1316,7 +1622,8 @@ client.on(
                             )
                           )
                         : "Unavailable",
-                    inline: true,
+                    inline:
+                      true,
                   },
                   {
                     name:
@@ -1326,7 +1633,8 @@ client.on(
                         settings,
                         true
                       ),
-                    inline: false,
+                    inline:
+                      false,
                   }
                 )
                 .setFooter({
@@ -1356,10 +1664,6 @@ client.on(
           return;
         }
 
-        // --------------------------------------------
-        // Manual profile
-        // --------------------------------------------
-
         const linkedEmbed =
           new EmbedBuilder()
             .setColor(
@@ -1386,7 +1690,8 @@ client.on(
                   "Riot ID",
                 value:
                   `**${linkedAccount.riot_name}#${linkedAccount.riot_tag}**`,
-                inline: true,
+                inline:
+                  true,
               },
               {
                 name:
@@ -1397,7 +1702,8 @@ client.on(
                     linkedAccount.link_method ===
                       "rso"
                   ),
-                inline: true,
+                inline:
+                  true,
               }
             )
             .setFooter({
@@ -1442,12 +1748,15 @@ client.on(
           subcommand ===
           "view"
         ) {
+          const currentSettings =
+            await getSyncedGuildSettings(
+              interaction.guildId
+            );
+
           await interaction.reply({
             embeds: [
               buildSettingsEmbed(
-                getGuildSettings(
-                  interaction.guildId
-                )
+                currentSettings
               ),
             ],
             flags:
@@ -1496,6 +1805,10 @@ client.on(
               interaction.guildId
             );
 
+          await pushGuildSettings(
+            updatedSettings
+          );
+
           await interaction.reply({
             content:
               `Server style changed to **${style}**.`,
@@ -1527,7 +1840,9 @@ client.on(
             rawColor.startsWith(
               "#"
             )
-              ? rawColor.slice(1)
+              ? rawColor.slice(
+                  1
+                )
               : rawColor;
 
           if (
@@ -1560,6 +1875,10 @@ client.on(
             getGuildSettings(
               interaction.guildId
             );
+
+          await pushGuildSettings(
+            updatedSettings
+          );
 
           await interaction.reply({
             content:
@@ -1611,6 +1930,10 @@ client.on(
               interaction.guildId
             );
 
+          await pushGuildSettings(
+            updatedSettings
+          );
+
           await interaction.reply({
             content:
               "Footer updated.",
@@ -1646,6 +1969,10 @@ client.on(
               interaction.guildId
             );
 
+          await pushGuildSettings(
+            updatedSettings
+          );
+
           await interaction.reply({
             content:
               `Emoji style changed to **${emojiStyle}**.`,
@@ -1673,6 +2000,10 @@ client.on(
             getGuildSettings(
               interaction.guildId
             );
+
+          await pushGuildSettings(
+            updatedSettings
+          );
 
           await interaction.reply({
             content:
@@ -1792,7 +2123,8 @@ client.on(
             .setDescription(
               getStyle(
                 settings
-              ) === "cute"
+              ) ===
+                "cute"
                 ? `**${user1.username}** ♡ **${user2.username}**`
                 : `**${user1.username}** vs **${user2.username}**`
             )
@@ -1802,7 +2134,8 @@ client.on(
                   user1.username,
                 value:
                   `**${account1.riot_name}#${account1.riot_tag}**\n${account1Verification}`,
-                inline: true,
+                inline:
+                  true,
               },
               {
                 name:
@@ -1819,14 +2152,16 @@ client.on(
                   "cute"
                     ? "୨୧"
                     : "vs",
-                inline: true,
+                inline:
+                  true,
               },
               {
                 name:
                   user2.username,
                 value:
                   `**${account2.riot_name}#${account2.riot_tag}**\n${account2Verification}`,
-                inline: true,
+                inline:
+                  true,
               }
             )
             .setFooter({
@@ -1882,9 +2217,11 @@ async function start() {
   );
 }
 
-start().catch((error) => {
-  console.error(
-    "Failed to start bot:",
-    error
-  );
-});
+start().catch(
+  (error) => {
+    console.error(
+      "Failed to start bot:",
+      error
+    );
+  }
+);
